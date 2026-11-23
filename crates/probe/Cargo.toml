@@ -1,0 +1,19 @@
+[package]
+name = "gamennetto-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Detects the hardware, encoders, network and tools available on this machine."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+if-addrs = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dxgi",
+  "Win32_System_Com",
+  "Win32_Media_MediaFoundation",
+] }

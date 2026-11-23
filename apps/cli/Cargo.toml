@@ -1,0 +1,12 @@
+[package]
+name = "gamennetto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Use your phone or another PC as a second screen."
+
+[dependencies]
+gamennetto-probe = { path = "../../crates/probe" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
