@@ -16,6 +16,11 @@ semver_check = false
 # `feat:` bumps the minor version in 0.x too (0.1.2 -> 0.2.0).
 features_always_increment_minor = true
 
+# Build helper, not part of the product.
+[[package]]
+name = "xtask"
+release = false
+
 # One product version; the `gamennetto` package carries the tag and the
 # changelog for the whole workspace.
 [[package]]

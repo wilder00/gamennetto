@@ -47,10 +47,11 @@ administrator rights needed; it adds Start menu shortcuts and puts
   Ruleset on `main`: require a pull request (merge method: merge) and the
   status check `test`.
 - **Update signing key** (run by the maintainer, never by CI):
-  `npx @tauri-apps/cli@2 signer generate -w ~/.tauri/gamennetto.key`
-  - secret `TAURI_SIGNING_PRIVATE_KEY`: the private key file's content
-  - secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: its password
-  - variable `UPDATE_PUBKEY`: the public key (`gamennetto.key.pub` content)
+  `cargo run -p xtask -- keygen` (asks for a password; writes
+  `~/.gamennetto/update.key` and `update.key.pub`, and prints what to store)
+  - secret `GAMENNETTO_SIGNING_KEY`: the private key file's content
+  - secret `GAMENNETTO_SIGNING_KEY_PASSWORD`: its password
+  - variable `UPDATE_PUBKEY`: the public key (`update.key.pub` content)
 
   Keep a backup of the private key: without it, installed copies can't be
   updated any more.

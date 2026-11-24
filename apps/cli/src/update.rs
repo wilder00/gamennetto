@@ -1,7 +1,6 @@
 //! `gamennetto update`: installs the newest release from GitHub.
 //!
-//! Each release has `latest.json` (same format as Tauri's updater, so the
-//! future desktop app can keep using it):
+//! Each release has `latest.json` (the same layout Tauri's updater uses):
 //! `{"version": "0.2.0", "platforms": {"windows-x86_64": {"url": ..., "signature": ...}}}`.
 //! The installer is checked against a minisign signature made with the
 //! project's private key (kept as a GitHub secret). The public key is built
@@ -71,8 +70,8 @@ fn latest(timeout_s: u32) -> Result<Release> {
     })
 }
 
-/// Checks a minisign signature in Tauri's format: both the key and the
-/// signature are base64 of the text minisign writes.
+/// Checks a minisign signature: both the key and the signature are base64
+/// of the text minisign writes (see tools/xtask).
 fn verify(data: &[u8], signature_b64: &str, pubkey_b64: &str) -> Result<()> {
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -175,9 +174,9 @@ mod tests {
         assert!(!is_newer("junk", "0.1.0"));
     }
 
-    /// Signs like `tauri signer sign` (base64 of minisign's text) and checks.
+    /// Signs like `xtask sign` (base64 of minisign's text) and checks.
     #[test]
-    fn verifies_tauri_style_signatures() {
+    fn verifies_minisign_signatures() {
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD;
         let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
@@ -187,5 +186,24 @@ mod tests {
         let sig = b64.encode(sig.to_string());
         assert!(verify(&data, &sig, &pk).is_ok());
         assert!(verify(b"tampered bytes", &sig, &pk).is_err());
+    }
+
+    /// End-to-end check with files made by `xtask keygen` + `xtask sign`.
+    /// Runs only when GAMENNETTO_TEST_SIGNED_FILE points at a signed file
+    /// (with FILE.sig next to it) and GAMENNETTO_TEST_PUBKEY_FILE at the key.
+    #[test]
+    fn verifies_files_signed_by_xtask() {
+        let (Ok(file), Ok(pk)) =
+            (std::env::var("GAMENNETTO_TEST_SIGNED_FILE"), std::env::var("GAMENNETTO_TEST_PUBKEY_FILE"))
+        else {
+            return;
+        };
+        let data = std::fs::read(&file).unwrap();
+        let sig = std::fs::read_to_string(format!("{file}.sig")).unwrap();
+        let pk = std::fs::read_to_string(pk).unwrap();
+        verify(&data, &sig, &pk).unwrap();
+        let mut bad = data.clone();
+        bad.push(b'!');
+        assert!(verify(&bad, &sig, &pk).is_err());
     }
 }

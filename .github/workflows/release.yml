@@ -3,7 +3,7 @@ name: Release
 # Builds the Windows installer for every tag vX.Y.Z and attaches it to a
 # GitHub Release, with:
 #   Gamennetto-X.Y.Z-setup.exe        per-user installer (Inno Setup, no admin)
-#   Gamennetto-X.Y.Z-setup.exe.sig    minisign signature (Tauri format)
+#   Gamennetto-X.Y.Z-setup.exe.sig    minisign signature (tools/xtask)
 #   gamennetto-vX.Y.Z-x86_64-windows.exe   the program alone
 #   latest.json                       read by `gamennetto update`
 #   SHA256SUMS.txt
@@ -58,10 +58,10 @@ jobs:
       - name: Check the update keys are set up
         env:
           PUBKEY: ${{ vars.UPDATE_PUBKEY }}
-          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          KEY: ${{ secrets.GAMENNETTO_SIGNING_KEY }}
         run: |
           [ -n "$PUBKEY" ] || { echo "::error::Repository variable UPDATE_PUBKEY is missing (see docs/VERSIONING.md)"; exit 1; }
-          [ -n "$KEY" ] || { echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY is missing (see docs/VERSIONING.md)"; exit 1; }
+          [ -n "$KEY" ] || { echo "::error::Secret GAMENNETTO_SIGNING_KEY is missing (see docs/VERSIONING.md)"; exit 1; }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # The public key goes into the program, so installed copies can check
@@ -80,9 +80,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign the installer for updates
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx --yes @tauri-apps/cli@2 signer sign "target/installer/Gamennetto-${TAG#v}-setup.exe"
+          GAMENNETTO_SIGNING_KEY: ${{ secrets.GAMENNETTO_SIGNING_KEY }}
+          GAMENNETTO_SIGNING_KEY_PASSWORD: ${{ secrets.GAMENNETTO_SIGNING_KEY_PASSWORD }}
+        run: cargo run --release -p xtask -- sign "target/installer/Gamennetto-${TAG#v}-setup.exe"
       - name: Collect the release files
         run: |
           v="${TAG#v}"
