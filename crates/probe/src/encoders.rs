@@ -48,21 +48,10 @@ pub fn detect() -> Vec<Encoder> {
         ];
 
         for (codec, subtype, hardware, flags) in queries {
-            let output = MFT_REGISTER_TYPE_INFO {
-                guidMajorType: MFMediaType_Video,
-                guidSubtype: subtype,
-            };
+            let output = MFT_REGISTER_TYPE_INFO { guidMajorType: MFMediaType_Video, guidSubtype: subtype };
             let mut activates: *mut Option<IMFActivate> = std::ptr::null_mut();
             let mut count = 0u32;
-            if MFTEnumEx(
-                MFT_CATEGORY_VIDEO_ENCODER,
-                flags,
-                None,
-                Some(&output),
-                &mut activates,
-                &mut count,
-            )
-            .is_err()
+            if MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, flags, None, Some(&output), &mut activates, &mut count).is_err()
                 || activates.is_null()
             {
                 continue;
@@ -73,8 +62,8 @@ pub fn detect() -> Vec<Encoder> {
                 let Some(activate) = std::ptr::read(activates.add(i)) else {
                     continue;
                 };
-                let name = get_string(&activate, &MFT_FRIENDLY_NAME_Attribute)
-                    .unwrap_or_else(|| "unnamed encoder".into());
+                let name =
+                    get_string(&activate, &MFT_FRIENDLY_NAME_Attribute).unwrap_or_else(|| "unnamed encoder".into());
                 // The same encoder can match more than one query; keep it once.
                 if out.iter().any(|e: &Encoder| e.codec == codec && e.name == name) {
                     continue;
@@ -86,21 +75,11 @@ pub fn detect() -> Vec<Encoder> {
                 // Listing is not enough: drivers can register an encoder that
                 // then fails to start. Try to create it.
                 let result = activate.ActivateObject::<IMFTransform>();
-                let error = result
-                    .as_ref()
-                    .err()
-                    .map(|e| format!("0x{:08X} {}", e.code().0 as u32, e.message()));
+                let error = result.as_ref().err().map(|e| format!("0x{:08X} {}", e.code().0 as u32, e.message()));
                 drop(result);
                 let _ = activate.ShutdownObject();
 
-                out.push(Encoder {
-                    codec,
-                    name,
-                    hardware,
-                    vendor,
-                    works: error.is_none(),
-                    error,
-                });
+                out.push(Encoder { codec, name, hardware, vendor, works: error.is_none(), error });
             }
             CoTaskMemFree(Some(activates as _));
         }

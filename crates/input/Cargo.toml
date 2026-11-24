@@ -1,0 +1,17 @@
+[package]
+name = "gamennetto-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Injects mouse and keyboard input received from a viewer."
+
+[dependencies]
+anyhow = "1"
+gamennetto-net = { path = "../net" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
