@@ -1,0 +1,71 @@
+name: Release PR
+
+# Opens/updates a PR that bumps the version and changelog from Conventional
+# Commits, with auto-merge on (it merges once CI passes), and tags vX.Y.Z when
+# that PR is merged. The tag triggers release.yml; the release is then merged
+# back into develop. Same flow as debutuuru; see docs/VERSIONING.md.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-plz-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # A PAT is required so the pushed tag triggers release.yml
+          # (tags pushed with GITHUB_TOKEN do not start other workflows).
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5
+        id: release
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      # The release (version bump + CHANGELOG.md) back into develop. A
+      # conflict fails this step: merge main into develop by hand.
+      - name: Bring the release back into develop
+        if: steps.release.outputs.releases_created == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin develop
+          git switch -c develop origin/develop
+          git merge --no-edit -m "Merge branch 'main' into develop" "$GITHUB_SHA"
+          git push origin develop
+
+  release-plz-pr:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5
+        id: release-pr
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - name: Turn on auto-merge for the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          PR_URL: ${{ fromJSON(steps.release-pr.outputs.pr || '{}').html_url }}
+        run: |
+          if [ -z "$PR_URL" ]; then
+            echo "No release PR."
+            exit 0
+          fi
+          gh pr merge --auto --merge "$PR_URL"

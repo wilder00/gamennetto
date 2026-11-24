@@ -1,0 +1,130 @@
+name: Release
+
+# Builds the Windows installer for every tag vX.Y.Z and attaches it to a
+# GitHub Release, with:
+#   Gamennetto-X.Y.Z-setup.exe        per-user installer (Inno Setup, no admin)
+#   Gamennetto-X.Y.Z-setup.exe.sig    minisign signature (Tauri format)
+#   gamennetto-vX.Y.Z-x86_64-windows.exe   the program alone
+#   latest.json                       read by `gamennetto update`
+#   SHA256SUMS.txt
+#
+# The release is created as a draft, every file is uploaded to it, and it's
+# published last (releases can be immutable once published). A failed build
+# leaves the draft unpublished: re-run the failed job.
+
+on:
+  push:
+    tags: ["v*"]
+  # By hand (Actions > Release > Run workflow) for an existing tag whose
+  # release failed: builds that tag's code with this workflow from main.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      - id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$TAG" -f name="Gamennetto $TAG" \
+            -F draft=true -F generate_release_notes=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: draft
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Check the update keys are set up
+        env:
+          PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$PUBKEY" ] || { echo "::error::Repository variable UPDATE_PUBKEY is missing (see docs/VERSIONING.md)"; exit 1; }
+          [ -n "$KEY" ] || { echo "::error::Secret TAURI_SIGNING_PRIVATE_KEY is missing (see docs/VERSIONING.md)"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The public key goes into the program, so installed copies can check
+      # the signature of future installers.
+      - name: Build
+        env:
+          GAMENNETTO_UPDATE_PUBKEY: ${{ vars.UPDATE_PUBKEY }}
+        run: cargo build --release -p gamennetto
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          $v = $env:TAG.TrimStart('v')
+          & $iscc /Qp "/DAppVersion=$v" installer\gamennetto.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Sign the installer for updates
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@2 signer sign "target/installer/Gamennetto-${TAG#v}-setup.exe"
+      - name: Collect the release files
+        run: |
+          v="${TAG#v}"
+          mkdir -p out
+          setup="Gamennetto-$v-setup.exe"
+          cp "target/installer/$setup" "target/installer/$setup.sig" out/
+          cp target/release/gamennetto.exe "out/gamennetto-$TAG-x86_64-windows.exe"
+          jq -n \
+            --arg version "$v" \
+            --arg notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$setup" \
+            --arg sig "$(cat "out/$setup.sig")" \
+            '{version: $version, notes: $notes, pub_date: $date,
+              platforms: {"windows-x86_64": {url: $url, signature: $sig}}}' > out/latest.json
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          ls -l out
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft.outputs.id }}
+        run: |
+          cd out
+          for f in *; do
+            # A re-run replaces the file uploaded before.
+            old=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq ".[] | select(.name == \"$f\") | .id")
+            if [ -n "$old" ]; then gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"; fi
+            curl -sSf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$f" > /dev/null
+            echo "Uploaded $f"
+          done
+
+  # Everything uploaded: publish and mark it latest, which is where
+  # `gamennetto update` looks.
+  publish:
+    needs: [draft, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft.outputs.id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq '.[].name' | grep -qx latest.json \
+            || { echo "latest.json is missing; re-run the windows job."; exit 1; }
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true --jq .html_url
