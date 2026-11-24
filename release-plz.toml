@@ -1,0 +1,39 @@
+# Automated versioning. See docs/VERSIONING.md.
+# release-plz reads Conventional Commits, opens a "release" PR that bumps the
+# workspace version + CHANGELOG.md, and tags `vX.Y.Z` when that PR is merged.
+
+[workspace]
+changelog_update = false   # one product changelog, owned by `gamennetto` (below)
+# Nothing goes to crates.io: the previous version comes from git tags.
+git_only = true
+publish = false
+# Tag only when the release PR is merged, never on every push to main.
+release_always = false
+git_release_enable = false # the Release workflow builds the installer and creates the GitHub Release
+git_tag_enable = false     # only the CLI package creates the product tag (below)
+git_tag_name = "v{{ version }}"
+semver_check = false
+# `feat:` bumps the minor version in 0.x too (0.1.2 -> 0.2.0).
+features_always_increment_minor = true
+
+# Build helper, not part of the product.
+[[package]]
+name = "xtask"
+release = false
+
+# One product version; the `gamennetto` package carries the tag and the
+# changelog for the whole workspace.
+[[package]]
+name = "gamennetto"
+git_tag_enable = true
+changelog_path = "CHANGELOG.md"
+changelog_update = true
+changelog_include = [
+  "gamennetto-probe",
+  "gamennetto-capture",
+  "gamennetto-encode",
+  "gamennetto-net",
+  "gamennetto-input",
+  "gamennetto-decode",
+  "gamennetto-vdisplay",
+]

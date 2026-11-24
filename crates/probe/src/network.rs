@@ -33,9 +33,22 @@ pub fn detect() -> Vec<Iface> {
 /// Name-based guess; good enough to rank adapters, not a guarantee.
 fn looks_virtual(name: &str) -> bool {
     const MARKERS: &[&str] = &[
-        "vmware", "virtualbox", "vbox", "hyper-v", "vethernet", "wsl", "docker",
-        "loopback", "tailscale", "zerotier", "hamachi", "wireguard", "openvpn",
-        "tap-", "tun", "npcap",
+        "vmware",
+        "virtualbox",
+        "vbox",
+        "hyper-v",
+        "vethernet",
+        "wsl",
+        "docker",
+        "loopback",
+        "tailscale",
+        "zerotier",
+        "hamachi",
+        "wireguard",
+        "openvpn",
+        "tap-",
+        "tun",
+        "npcap",
     ];
     let lower = name.to_ascii_lowercase();
     MARKERS.iter().any(|m| lower.contains(m))

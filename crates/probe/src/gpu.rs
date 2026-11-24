@@ -48,11 +48,7 @@ pub fn detect() -> Vec<Gpu> {
         let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
             continue;
         };
-        let len = desc
-            .Description
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(desc.Description.len());
+        let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
         out.push(Gpu {
             name: String::from_utf16_lossy(&desc.Description[..len]),
             vendor: Vendor::from_pci_id(desc.VendorId),

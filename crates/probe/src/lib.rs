@@ -42,14 +42,7 @@ pub fn probe() -> Report {
     let interfaces = network::detect();
     let android = android::detect();
     let recommendation = recommend(&gpus, &encoders, &interfaces);
-    Report {
-        os: std::env::consts::OS.to_string(),
-        gpus,
-        encoders,
-        interfaces,
-        android,
-        recommendation,
-    }
+    Report { os: std::env::consts::OS.to_string(), gpus, encoders, interfaces, android, recommendation }
 }
 
 /// Fallback order for H.264:
@@ -63,16 +56,10 @@ pub fn probe() -> Report {
 fn recommend(gpus: &[Gpu], encoders: &[Encoder], ifaces: &[Iface]) -> Recommendation {
     let mut notes = Vec::new();
 
-    let display_vendors: Vec<Vendor> = gpus
-        .iter()
-        .filter(|g| g.drives_display && !g.is_software)
-        .map(|g| g.vendor)
-        .collect();
-    let h264 = |hardware: bool| {
-        encoders
-            .iter()
-            .filter(move |e| e.codec == Codec::H264 && e.hardware == hardware && e.works)
-    };
+    let display_vendors: Vec<Vendor> =
+        gpus.iter().filter(|g| g.drives_display && !g.is_software).map(|g| g.vendor).collect();
+    let h264 =
+        |hardware: bool| encoders.iter().filter(move |e| e.codec == Codec::H264 && e.hardware == hardware && e.works);
 
     for e in encoders.iter().filter(|e| e.hardware && !e.works) {
         notes.push(format!(
@@ -108,10 +95,7 @@ fn recommend(gpus: &[Gpu], encoders: &[Encoder], ifaces: &[Iface]) -> Recommenda
         notes.push("No GPU was detected.".into());
     }
 
-    let lan_address = ifaces
-        .iter()
-        .find(|i| i.is_private_lan && !i.is_virtual)
-        .map(|i| i.addr.clone());
+    let lan_address = ifaces.iter().find(|i| i.is_private_lan && !i.is_virtual).map(|i| i.addr.clone());
     if lan_address.is_none() {
         notes.push(
             "No real Wi-Fi/Ethernet LAN connection found. Connect to your network, \
@@ -133,43 +117,22 @@ mod tests {
     use super::*;
 
     fn gpu(vendor: Vendor, drives_display: bool) -> Gpu {
-        Gpu {
-            name: format!("{vendor:?}"),
-            vendor,
-            vram_mb: 1024,
-            is_software: false,
-            drives_display,
-        }
+        Gpu { name: format!("{vendor:?}"), vendor, vram_mb: 1024, is_software: false, drives_display }
     }
 
     fn enc(name: &str, vendor: Option<Vendor>, hardware: bool, works: bool) -> Encoder {
-        Encoder {
-            codec: Codec::H264,
-            name: name.into(),
-            hardware,
-            vendor,
-            works,
-            error: None,
-        }
+        Encoder { codec: Codec::H264, name: name.into(), hardware, vendor, works, error: None }
     }
 
     fn iface(name: &str, addr: &str, is_virtual: bool) -> Iface {
-        Iface {
-            name: name.into(),
-            addr: addr.into(),
-            is_private_lan: true,
-            is_virtual,
-        }
+        Iface { name: name.into(), addr: addr.into(), is_private_lan: true, is_virtual }
     }
 
     #[test]
     fn prefers_encoder_on_display_gpu() {
         // Typical gaming laptop: Intel draws the screen, NVIDIA is listed first.
         let gpus = [gpu(Vendor::Intel, true), gpu(Vendor::Nvidia, false)];
-        let encs = [
-            enc("NV", Some(Vendor::Nvidia), true, true),
-            enc("QSV", Some(Vendor::Intel), true, true),
-        ];
+        let encs = [enc("NV", Some(Vendor::Nvidia), true, true), enc("QSV", Some(Vendor::Intel), true, true)];
         let r = recommend(&gpus, &encs, &[]);
         assert_eq!(r.h264_encoder.as_deref(), Some("QSV"));
         assert!(r.hardware_encoding);
@@ -187,10 +150,7 @@ mod tests {
     #[test]
     fn skips_encoders_that_fail_to_start() {
         let gpus = [gpu(Vendor::Nvidia, true)];
-        let encs = [
-            enc("NV", Some(Vendor::Nvidia), true, false),
-            enc("SW", None, false, true),
-        ];
+        let encs = [enc("NV", Some(Vendor::Nvidia), true, false), enc("SW", None, false, true)];
         let r = recommend(&gpus, &encs, &[]);
         assert_eq!(r.h264_encoder.as_deref(), Some("SW"));
         assert!(!r.hardware_encoding);
@@ -206,10 +166,8 @@ mod tests {
 
     #[test]
     fn ignores_virtual_adapters_for_lan_address() {
-        let ifaces = [
-            iface("VMware Network Adapter VMnet1", "192.168.174.1", true),
-            iface("Wi-Fi", "192.168.100.7", false),
-        ];
+        let ifaces =
+            [iface("VMware Network Adapter VMnet1", "192.168.174.1", true), iface("Wi-Fi", "192.168.100.7", false)];
         let r = recommend(&[], &[], &ifaces);
         assert_eq!(r.lan_address.as_deref(), Some("192.168.100.7"));
     }

@@ -1,0 +1,39 @@
+name: Ship
+
+# Run by hand (Actions > Ship > Run workflow): opens the PR develop -> main, or
+# reuses the open one, and turns on auto-merge with a merge commit. It merges
+# once CI passes; then the release PR merges the same way (release-plz.yml).
+#
+# Uses RELEASE_PLZ_TOKEN, not GITHUB_TOKEN: a PR opened with GITHUB_TOKEN
+# starts no workflows, so its required CI checks would never run.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Open the PR and turn on auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          git fetch origin main develop
+          commits=$(git log --no-merges --format='- %s' origin/main..origin/develop)
+          if [ -z "$commits" ]; then
+            echo "develop has nothing new for main."
+            exit 0
+          fi
+          url=$(gh pr list --base main --head develop --state open --json url --jq '.[0].url // empty')
+          if [ -z "$url" ]; then
+            body=$(printf 'Merges `develop` into `main`. Auto-merge is on: it merges with a merge commit once CI passes, and release-plz then opens the release PR, which merges the same way.\n\n%s\n' "$commits")
+            url=$(gh pr create --base main --head develop --title "Merge develop into main" --body "$body")
+          fi
+          gh pr merge --auto --merge "$url"
+          echo "Auto-merge is on: $url" >> "$GITHUB_STEP_SUMMARY"
