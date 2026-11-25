@@ -97,6 +97,12 @@ impl Shortcuts {
 type Sink = Box<dyn Fn(GrabEvent) + Send>;
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+static DEBUG: AtomicBool = AtomicBool::new(false);
+
+/// Print what the hook does with each key (for `GAMENNETTO_DEBUG=1`).
+pub fn set_debug(on: bool) {
+    DEBUG.store(on, Ordering::Relaxed);
+}
 static STATE: Mutex<Option<(Shortcuts, Sink)>> = Mutex::new(None);
 
 /// The installed hook. It does nothing until `set_active(true)`.
@@ -133,9 +139,19 @@ impl Drop for KeyboardHook {
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 && ACTIVE.load(Ordering::SeqCst) {
         let k = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        let injected = k.flags.0 & LLKHF_INJECTED.0 != 0;
+        if DEBUG.load(Ordering::Relaxed) {
+            eprintln!(
+                "[keys] hook saw vk 0x{:02x} scan 0x{:02x} flags 0x{:x}{}",
+                k.vkCode,
+                k.scanCode,
+                k.flags.0,
+                if injected { " (typed by a program: ignored)" } else { "" }
+            );
+        }
         // Keys typed by programs (including our own host on the same PC)
         // are left alone, so they can't loop back.
-        if k.flags.0 & LLKHF_INJECTED.0 == 0 {
+        if !injected {
             let mut sc = k.scanCode;
             if sc == 0 {
                 sc = MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) & 0xFF;

@@ -127,7 +127,14 @@ mod imp {
     use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
     use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
     use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+    use winit::platform::scancode::PhysicalKeyExtScancode;
     use winit::window::{Fullscreen, Window, WindowId};
+
+    /// `GAMENNETTO_DEBUG=1` prints what happens to each key.
+    fn debug() -> bool {
+        static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("GAMENNETTO_DEBUG").is_some());
+        *ON
+    }
 
     static START: LazyLock<Instant> = LazyLock::new(Instant::now);
     fn now_us() -> u64 {
@@ -512,7 +519,13 @@ mod imp {
                     match KeyboardHook::install(move |ev| {
                         let _ = proxy.send_event(UserEvent::Grab(ev));
                     }) {
-                        Ok(h) => self.hook = Some(h),
+                        Ok(h) => {
+                            if debug() {
+                                crate::grab::set_debug(true);
+                                eprintln!("[keys] keyboard hook installed");
+                            }
+                            self.hook = Some(h)
+                        }
                         Err(e) => eprintln!("Alt+Tab and the Windows key will stay on this PC ({e:#})."),
                     }
                     self.redraw();
@@ -558,15 +571,20 @@ mod imp {
                     self.welcome = Some(w);
                 }
                 UserEvent::Frame => self.on_frames(),
-                UserEvent::Grab(ev) => match ev {
-                    GrabEvent::Key { scancode, down } => self.send_input(InputEvent::Key { scancode, down }),
-                    GrabEvent::Release => self.ungrab(),
-                    GrabEvent::ToggleFullscreen => self.toggle_fullscreen(),
-                    GrabEvent::Quit => {
-                        self.ungrab();
-                        el.exit();
+                UserEvent::Grab(ev) => {
+                    if debug() {
+                        eprintln!("[keys] hook: {ev:?} (grabbed: {})", self.grabbed);
                     }
-                },
+                    match ev {
+                        GrabEvent::Key { scancode, down } => self.send_input(InputEvent::Key { scancode, down }),
+                        GrabEvent::Release => self.ungrab(),
+                        GrabEvent::ToggleFullscreen => self.toggle_fullscreen(),
+                        GrabEvent::Quit => {
+                            self.ungrab();
+                            el.exit();
+                        }
+                    }
+                }
                 UserEvent::Closed(msg) => {
                     if !msg.is_empty() && self.result.is_ok() {
                         self.result = Err(anyhow!(msg));
@@ -632,8 +650,40 @@ mod imp {
                     self.send_input(InputEvent::Wheel { x, y });
                 }
                 WindowEvent::KeyboardInput { event, .. } => {
-                    // Keys reach here only when not grabbed: they stay on
-                    // this PC. (While grabbed, the keyboard hook takes them.)
+                    // While grabbed the keyboard hook normally takes every
+                    // key before it gets here. If one arrives anyway (the hook
+                    // is missing, or Windows skipped it), send it from here,
+                    // so typing still reaches the host. Not on the same PC as
+                    // the host: its typed keys would come back here and loop.
+                    if self.grabbed {
+                        let scancode = event.physical_key.to_scancode();
+                        if debug() {
+                            eprintln!(
+                                "[keys] window got {:?} (hook missed it), scancode {scancode:x?}",
+                                event.physical_key
+                            );
+                        }
+                        if !self.addr.ip().is_loopback() {
+                            if let Some(scancode) = scancode {
+                                let down = event.state.is_pressed();
+                                let shortcut = self.mods.control_key() && self.mods.alt_key();
+                                match event.physical_key {
+                                    PhysicalKey::Code(KeyCode::F11) => {
+                                        if down && !event.repeat {
+                                            self.toggle_fullscreen();
+                                        }
+                                    }
+                                    PhysicalKey::Code(KeyCode::KeyQ) if shortcut => {
+                                        self.ungrab();
+                                        el.exit();
+                                    }
+                                    _ => self.send_input(InputEvent::Key { scancode, down }),
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    // Not grabbed: keys stay on this PC.
                     if !event.state.is_pressed() || event.repeat {
                         return;
                     }
