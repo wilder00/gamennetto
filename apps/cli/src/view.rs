@@ -193,6 +193,11 @@ mod imp {
 
     pub fn run(addr: SocketAddr, code: PairingCode, seconds: Option<Duration>) -> Result<()> {
         let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+        // No raw input: once winit registers the keyboard for raw input,
+        // Windows stops calling our low-level keyboard hook (measured), and
+        // Alt+Tab and the Windows key stay on this PC. The viewer only needs
+        // window events.
+        event_loop.listen_device_events(winit::event_loop::DeviceEvents::Never);
         let proxy = event_loop.create_proxy();
         let (frames_tx, frames_rx) = std_mpsc::channel();
         let (to_host_tx, to_host_rx) = mpsc::unbounded_channel();
@@ -569,6 +574,11 @@ mod imp {
                         }
                     }
                     self.welcome = Some(w);
+                    // Testing aid (with GAMENNETTO_DEBUG): take control at
+                    // once, without a click.
+                    if debug() && std::env::var_os("GAMENNETTO_DEBUG_GRAB").is_some() {
+                        self.grab();
+                    }
                 }
                 UserEvent::Frame => self.on_frames(),
                 UserEvent::Grab(ev) => {

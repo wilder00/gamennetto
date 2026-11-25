@@ -16,7 +16,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC_EX};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, MSG, WH_KEYBOARD_LL, WM_QUIT,
+    LLKHF_EXTENDED, LLKHF_UP, MSG, WH_KEYBOARD_LL, WM_QUIT,
 };
 
 pub const SC_CTRL: u32 = 0x1D;
@@ -107,9 +107,6 @@ pub fn set_debug(on: bool) {
 }
 static STATE: Mutex<Option<(Shortcuts, Sink)>> = Mutex::new(None);
 
-/// Tests only: also take keys typed by programs, so a test can type them.
-static TAKE_INJECTED: AtomicBool = AtomicBool::new(false);
-
 /// The installed hook. It does nothing until `set_active(true)`.
 ///
 /// It runs on a thread of its own that only waits for Windows' messages.
@@ -139,7 +136,15 @@ impl KeyboardHook {
             let _ = tx.send(Ok(GetCurrentThreadId()));
             // Waiting here is what lets Windows call the hook. WM_QUIT ends it.
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+            let ended = loop {
+                let r = GetMessageW(&mut msg, None, 0, 0).0;
+                if r == 0 || r == -1 {
+                    break r;
+                }
+            };
+            if DEBUG.load(Ordering::Relaxed) {
+                eprintln!("[keys] hook thread ended (GetMessage returned {ended})");
+            }
             let _ = UnhookWindowsHookEx(hook);
         })?;
         let thread_id = rx.recv().context("the keyboard hook thread stopped")??;
@@ -185,21 +190,21 @@ fn always_extended(vk: u32) -> bool {
 }
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 && ACTIVE.load(Ordering::SeqCst) {
+    let active = ACTIVE.load(Ordering::SeqCst);
+    if code >= 0 && DEBUG.load(Ordering::Relaxed) {
         let k = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        let injected = k.flags.0 & LLKHF_INJECTED.0 != 0 && !TAKE_INJECTED.load(Ordering::Relaxed);
-        if DEBUG.load(Ordering::Relaxed) {
-            eprintln!(
-                "[keys] hook saw vk 0x{:02x} scan 0x{:02x} flags 0x{:x}{}",
-                k.vkCode,
-                k.scanCode,
-                k.flags.0,
-                if injected { " (typed by a program: ignored)" } else { "" }
-            );
-        }
-        // Keys typed by programs (including our own host on the same PC)
-        // are left alone, so they can't loop back.
-        if !injected {
+        eprintln!(
+            "[keys] hook saw vk 0x{:02x} scan 0x{:02x} flags 0x{:x} extra 0x{:x} (grabbed: {active})",
+            k.vkCode, k.scanCode, k.flags.0, k.dwExtraInfo
+        );
+    }
+    if code >= 0 && active {
+        let k = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        // Keys typed by our own host (on the same PC) are left alone, so they
+        // can't loop back. Keys from other programs that type (keyboard
+        // tools, remote sessions) are taken like real ones.
+        let ours = k.dwExtraInfo == gamennetto_input::INPUT_TAG;
+        if !ours {
             let mut sc = k.scanCode;
             if sc == 0 {
                 sc = MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) & 0xFF;
@@ -239,7 +244,6 @@ mod tests {
         let got = Arc::new(Mutex::new(Vec::new()));
         let g = got.clone();
         let hook = KeyboardHook::install(move |e| g.lock().unwrap().push(e)).unwrap();
-        TAKE_INJECTED.store(true, Ordering::SeqCst);
         hook.set_active(true);
 
         let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
@@ -265,7 +269,6 @@ mod tests {
         unsafe { SendInput(&keys, std::mem::size_of::<INPUT>() as i32) };
         std::thread::sleep(std::time::Duration::from_millis(500));
         hook.set_active(false);
-        TAKE_INJECTED.store(false, Ordering::SeqCst);
         drop(hook);
 
         let got = got.lock().unwrap().clone();
