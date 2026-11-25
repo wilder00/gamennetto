@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "png",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-decode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "windows",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-encode"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "windows",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-input"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "gamennetto-net",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "mdns-sd",
@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-probe"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "if-addrs",
  "serde",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "gamennetto-vdisplay"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "sha2",
