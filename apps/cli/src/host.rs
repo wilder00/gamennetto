@@ -82,6 +82,95 @@ mod imp {
         extend: bool,
     }
 
+    /// Who may connect: viewers approved before, and pairing for new ones.
+    struct Gate {
+        code: Mutex<CodeState>,
+        /// Lines typed in this console, for "Allow? [y/N]". None when there
+        /// is no console to ask in (then only the code works).
+        console: Option<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
+    }
+
+    struct CodeState {
+        code: PairCode,
+        wrong: u32,
+        /// After too many wrong codes, codes are refused until then.
+        paused_until: Option<Instant>,
+    }
+
+    const MAX_WRONG_CODES: u32 = 3;
+    const CODE_PAUSE: Duration = Duration::from_secs(30);
+
+    impl Gate {
+        fn current_code(&self) -> Option<PairCode> {
+            let s = self.code.lock().unwrap();
+            match s.paused_until {
+                Some(t) if Instant::now() < t => None,
+                _ => Some(s.code),
+            }
+        }
+
+        /// Counts a wrong code; after a few, makes a new code and pauses
+        /// code pairing, so guessing is hopeless (3 tries per million codes).
+        fn wrong_code(&self, addr: SocketAddr) {
+            let mut s = self.code.lock().unwrap();
+            s.wrong += 1;
+            println!("  Wrong pairing code from {addr} ({}/{MAX_WRONG_CODES}).", s.wrong);
+            if s.wrong >= MAX_WRONG_CODES {
+                s.code = PairCode::random();
+                s.wrong = 0;
+                s.paused_until = Some(Instant::now() + CODE_PAUSE);
+                println!(
+                    "  Too many wrong codes: codes are refused for {} s. The new code is {}.",
+                    CODE_PAUSE.as_secs(),
+                    s.code
+                );
+            }
+        }
+
+        /// Asks here whether to let a new viewer in (number check).
+        fn approver(self: &Arc<Self>, name: String, addr: SocketAddr) -> Option<Approver> {
+            self.console.as_ref()?;
+            let gate = self.clone();
+            Some(Box::new(move |number| {
+                Box::pin(async move {
+                    let Some(console) = gate.console.as_ref() else { return false };
+                    let mut lines = console.lock().await; // one question at a time
+                    while lines.try_recv().is_ok() {} // drop anything typed before
+                    println!("\n  {name} ({addr}) wants to connect for the first time.");
+                    println!("  Its screen shows a number. Allow it only if the number is {}.", format_number(number));
+                    print!("  Allow? [y/N] ");
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    let answer = tokio::time::timeout(Duration::from_secs(60), lines.recv()).await;
+                    let yes = matches!(&answer, Ok(Some(l)) if is_yes(l));
+                    if answer.is_err() {
+                        println!("\n  No answer in 60 s: not allowed.");
+                    } else if !yes {
+                        println!("  Not allowed.");
+                    }
+                    yes
+                })
+            }))
+        }
+    }
+
+    fn is_yes(s: &str) -> bool {
+        matches!(s.trim().to_lowercase().as_str(), "y" | "yes" | "s" | "si" | "sí")
+    }
+
+    /// Reads this console's lines on a thread of its own.
+    fn console_lines() -> mpsc::UnboundedReceiver<String> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            while std::io::stdin().read_line(&mut line).is_ok_and(|n| n > 0) {
+                if tx.send(std::mem::take(&mut line)).is_err() {
+                    break;
+                }
+            }
+        });
+        rx
+    }
+
     /// State shared between the network tasks and the capture/encode thread.
     struct Shared {
         /// Where encoded frames go; None while nobody is watching.
@@ -128,7 +217,9 @@ mod imp {
         let enc = Encoding { max_height: s.max_height, fps: o.fps.unwrap_or(s.fps), mbps: o.mbps.unwrap_or(s.mbps) };
         let name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Gamennetto host".into());
 
-        let id = HostIdentity::generate()?;
+        let id = Identity::load_or_create(&data_dir().join("identity"))?;
+        let trust = TrustStore::open()?;
+        let known_viewers = trust.viewers.len();
         let rt = tokio::runtime::Runtime::new()?;
         let endpoint = rt.block_on(async { listen(&id, o.bind) })?;
         let port = endpoint.local_addr()?.port();
@@ -165,7 +256,14 @@ mod imp {
         if o.bind.is_none() && port != DEFAULT_PORT {
             println!("                 (port {DEFAULT_PORT} was busy; viewers on the network still find this host)");
         }
-        println!("  Pairing code:  {}", id.code);
+        let interactive = ui::interactive();
+        let code = PairCode::random();
+        println!("  Pairing code:  {code}");
+        println!(
+            "                 Only for a PC connecting the first time{}. Approved PCs ({known_viewers} so far)",
+            if interactive { " (or approve it here by comparing a number)" } else { "" }
+        );
+        println!("                 connect directly; see `gamennetto devices`.");
         println!(
             "  Control:       {}",
             if o.allow_control {
@@ -191,10 +289,15 @@ mod imp {
             let _ = done_tx.send(());
         })?;
 
+        drop(trust); // read again for each viewer, so `devices remove` applies at once
+        let gate = Arc::new(Gate {
+            code: Mutex::new(CodeState { code, wrong: 0, paused_until: None }),
+            console: interactive.then(|| tokio::sync::Mutex::new(console_lines())),
+        });
         let allow_control = o.allow_control;
         rt.block_on(async {
             tokio::select! {
-                _ = accept_loop(endpoint, shared.clone(), name, allow_control) => {}
+                _ = accept_loop(endpoint, shared.clone(), gate, name, allow_control) => {}
                 _ = stop_signal() => println!("\n  Stopping..."),
             }
         });
@@ -213,7 +316,7 @@ mod imp {
     /// otherwise port 48100, then 48101..=48109, then any free port. (Another
     /// program, or a range Windows reserves for Hyper-V/WSL, may hold one.)
     /// Viewers find the actual port through LAN discovery.
-    fn listen(id: &HostIdentity, bind: Option<SocketAddr>) -> Result<quinn::Endpoint> {
+    fn listen(id: &Identity, bind: Option<SocketAddr>) -> Result<quinn::Endpoint> {
         if let Some(addr) = bind {
             return server_endpoint(id, addr);
         }
@@ -459,15 +562,21 @@ mod imp {
         }
     }
 
-    async fn accept_loop(endpoint: quinn::Endpoint, shared: Arc<Shared>, name: String, allow_control: bool) {
+    async fn accept_loop(
+        endpoint: quinn::Endpoint,
+        shared: Arc<Shared>,
+        gate: Arc<Gate>,
+        name: String,
+        allow_control: bool,
+    ) {
         let name = Arc::new(name);
         while let Some(incoming) = endpoint.accept().await {
-            let (shared, name) = (shared.clone(), name.clone());
+            let (shared, gate, name) = (shared.clone(), gate.clone(), name.clone());
             tokio::spawn(async move {
                 let addr = incoming.remote_address();
                 match incoming.await {
                     Ok(conn) => {
-                        if let Err(e) = serve(conn, &shared, &name, allow_control).await {
+                        if let Err(e) = serve(conn, &shared, &gate, &name, allow_control).await {
                             println!("  Viewer {addr} disconnected: {e:#}");
                         }
                     }
@@ -477,12 +586,47 @@ mod imp {
         }
     }
 
-    async fn serve(conn: quinn::Connection, shared: &Shared, host_name: &str, allow_control: bool) -> Result<()> {
+    async fn serve(
+        conn: quinn::Connection,
+        shared: &Shared,
+        gate: &Arc<Gate>,
+        host_name: &str,
+        allow_control: bool,
+    ) -> Result<()> {
         let addr = conn.remote_address();
+        // TLS proved the viewer holds the key behind this fingerprint.
+        let fp = peer_fingerprint(&conn)?;
         let (mut send, mut recv) = conn.accept_bi().await?;
-        let ViewerMsg::Hello { name, screen, .. } = read_msg(&mut recv).await? else {
+        let ViewerMsg::Hello { name, screen, pair, .. } = read_msg(&mut recv).await? else {
             bail!("viewer did not say hello");
         };
+
+        // Nobody gets past here without being approved, now or before.
+        // Read the list now: a PC removed with `gamennetto devices remove`
+        // while this host runs must not get in.
+        let known = TrustStore::open()?.is_trusted(Role::Viewer, &fp);
+        if !known || pair {
+            let binding = session_binding(&conn)?;
+            let approver = gate.approver(name.clone(), addr);
+            match host_pair(&mut send, &mut recv, &binding, gate.current_code(), approver).await? {
+                HostPairResult::Paired => {
+                    let mut t = TrustStore::open()?;
+                    t.add(Role::Viewer, &name, &fp);
+                    t.save()?;
+                    println!("  {name} ({addr}) approved. Next time it connects without a code.");
+                }
+                HostPairResult::WrongCode => {
+                    gate.wrong_code(addr);
+                    let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+                    return Ok(());
+                }
+                HostPairResult::Refused => {
+                    println!("  {name} ({addr}) was not allowed to connect.");
+                    let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
+                    return Ok(());
+                }
+            }
+        }
 
         if shared.busy.swap(true, Ordering::SeqCst) {
             write_msg(&mut send, &HostMsg::Busy).await?;

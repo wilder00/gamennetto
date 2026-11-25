@@ -43,19 +43,39 @@ On the **host** (the PC whose screen you want to show):
    - **Fastest**: lowest delay, softer image (good for games and drawing).
    - **Balanced**: the default, good for most things.
    - **Sharpest**: crisp text, needs a strong connection (5 GHz Wi-Fi or cable).
-4. It shows a **pairing code** like `ABCD-EF12-3456`. Leave the window open.
+4. It shows a 6-digit **pairing code** like `482 913`. Leave the window open.
 
 On the **viewer**:
 
 1. Open **View another PC** (or type `gamennetto view`).
 2. It finds the host on the network. If several are found, pick one.
-3. Type the pairing code shown on the host.
+3. **Only the first time** these two PCs connect, approve the connection
+   (see below). After that it connects straight away.
 
 The picture appears in a window. Its title shows the frames per second, the
 delay (from the host's screen to yours) and the data rate.
 
-The pairing code changes each time the host starts. Only a viewer that knows
-it can connect, and the connection is encrypted.
+### Approving a PC (only the first time)
+
+The viewer asks: *"Type the 6-digit code shown on the host, or press Enter to
+approve it there instead"*. Either way works:
+
+- **Type the code** shown in the host's window. Nothing else to do.
+- **Or press Enter** to compare a number. The viewer shows a number, and the
+  host's window asks *"LEGION wants to connect... Allow? [y/N]"* with the same
+  number. If both numbers match, type `y` on the host, then confirm on the
+  viewer. If they don't match, say no: something is wrong.
+
+From then on, the two PCs **remember each other** and connect without any
+code. A PC that wasn't approved can't connect, not even from your own network.
+The connection is always encrypted.
+
+- After 3 wrong codes the host makes a new code and refuses codes for 30
+  seconds, so guessing it doesn't work.
+- `gamennetto devices` lists the PCs this PC has approved, and
+  `gamennetto devices remove NAME` forgets one (it must be approved again).
+- Both PCs must have Gamennetto 0.2 or newer: older versions can't connect to
+  newer ones.
 
 ## 3. Control the host from the viewer
 
@@ -143,7 +163,10 @@ to remove it too. To remove only the driver: `gamennetto display uninstall`.
 | A VPN is on (ProtonVPN, NordVPN...) | Gamennetto uses your Wi-Fi/Ethernet address, not the VPN's, but the VPN may block local traffic: turn on its "Allow LAN connections" option, or turn it off while sharing. |
 | The host says port 48100 was busy | Nothing to do: it picked another port and viewers still find it. If you type the address by hand, include the port it shows, e.g. `gamennetto view 192.168.1.20:48101`. |
 | "the host is busy" | Another viewer is connected. Only one viewer at a time for now. |
-| Connection fails right away | Check the pairing code; it changes each time the host starts. |
+| "wrong code" | Type the code shown in the host's window *now*: it changes each time the host starts, and after 3 wrong tries. |
+| "not allowed" | The host said no, or nobody answered there within 60 s. Try again and type `y` on the host. |
+| Connection fails right away | Both PCs need the same Gamennetto version: run `gamennetto update` on both. |
+| A PC should no longer connect | On the host: `gamennetto devices remove NAME`. |
 | Picture stutters or delay is high | Use **Fastest** quality, move closer to the router, or use 5 GHz Wi-Fi or a cable. |
 | "no hardware encoder" or sharing won't start | Run `gamennetto doctor` and check "What Gamennetto would use". Sharing needs a GPU with a video encoder for now. |
 | The extra screen stayed on | `gamennetto reset-displays`, or Win+P > PC screen only. |

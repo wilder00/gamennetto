@@ -26,9 +26,12 @@ gamennetto reset-displays                # if the extra screen ever stays on
 ```
 On the other PC (the viewer):
 ```
-gamennetto view                          # finds the host, asks for the pairing code
-gamennetto view 192.168.1.20 --code ABCD-EF12-3456
+gamennetto view                          # finds the host; the first time, approve it
+gamennetto view 192.168.1.20 --code 482913
 ```
+The first time two PCs connect, type the host's 6-digit code on the viewer, or
+press Enter and approve on the host by comparing a number. After that they
+remember each other and connect directly (`gamennetto devices` lists them).
 In the viewer: **click** the picture to control the host, **Ctrl+Alt** to get
 your mouse and keyboard back, **F11** full screen, **Ctrl+Alt+Q** close.
 
@@ -37,6 +40,7 @@ Other commands:
 gamennetto update            # install the newest version
 gamennetto doctor            # what this PC can do: GPU, hardware encoders, network
 gamennetto display status    # the virtual monitor driver
+gamennetto devices           # approved PCs; `devices remove NAME` forgets one
 gamennetto --help            # everything else
 ```
 

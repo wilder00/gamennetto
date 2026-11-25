@@ -1,7 +1,7 @@
 //! `gamennetto view`: watch (and optionally control) a host's screen.
 
 use anyhow::{bail, Context, Result};
-use gamennetto_net::{discovery, PairingCode, DEFAULT_PORT};
+use gamennetto_net::{discovery, PairCode, DEFAULT_PORT};
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
@@ -16,17 +16,8 @@ pub struct Options {
 
 pub fn run(o: Options) -> Result<()> {
     let addr = resolve_address(o.address.as_deref())?;
-    let code = match o.code {
-        Some(c) => PairingCode::parse(&c)?,
-        None if ui::interactive() => loop {
-            let typed = ui::input("Pairing code shown on the host")?;
-            match PairingCode::parse(&typed) {
-                Ok(c) => break c,
-                Err(e) => println!("  {e}"),
-            }
-        },
-        None => bail!("give the host's pairing code with --code"),
-    };
+    // Only needed the first time; asked for then if not given here.
+    let code = o.code.as_deref().map(PairCode::parse).transpose()?;
     imp::run(addr, code, o.seconds.map(Duration::from_secs))
 }
 
@@ -141,6 +132,7 @@ mod imp {
         START.elapsed().as_micros() as u64
     }
 
+    #[derive(Clone)]
     struct Welcome {
         name: String,
         width: u32,
@@ -191,7 +183,18 @@ mod imp {
         result: Result<()>,
     }
 
-    pub fn run(addr: SocketAddr, code: PairingCode, seconds: Option<Duration>) -> Result<()> {
+    pub fn run(addr: SocketAddr, code: Option<PairCode>, seconds: Option<Duration>) -> Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        // Our main screen's size: in extend mode the host makes its virtual
+        // monitor this size, so it fills our screen exactly.
+        let screen = gamennetto_capture::monitors()
+            .ok()
+            .and_then(|l| l.into_iter().find(|m| m.primary))
+            .map(|m| (m.width, m.height));
+        // Connect and pair in the console first; the window opens after.
+        println!("Connecting to {addr}...");
+        let session = rt.block_on(connect(addr, code, screen))?;
+
         let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
         // No raw input: once winit registers the keyboard for raw input,
         // Windows stops calling our low-level keyboard hook (measured), and
@@ -203,15 +206,11 @@ mod imp {
         let (to_host_tx, to_host_rx) = mpsc::unbounded_channel();
         let clock = Arc::new(Mutex::new(ClockSync::default()));
 
-        let rt = tokio::runtime::Runtime::new()?;
         let (bye_tx, bye_rx) = tokio::sync::oneshot::channel();
-        // Our main screen's size: in extend mode the host makes its virtual
-        // monitor this size, so it fills our screen exactly.
-        let screen = gamennetto_capture::monitors()
-            .ok()
-            .and_then(|l| l.into_iter().find(|m| m.primary))
-            .map(|m| (m.width, m.height));
-        let net = rt.spawn(net_task(addr, code, screen, proxy.clone(), frames_tx, to_host_rx, clock.clone(), bye_rx));
+        let welcome = session.welcome.clone();
+        let net = rt.spawn(net_task(session, proxy.clone(), frames_tx, to_host_rx, clock.clone(), bye_rx));
+        // Queued now, handled as soon as the window exists.
+        let _ = proxy.send_event(UserEvent::Connected(welcome));
 
         let mut app = App {
             proxy,
@@ -235,7 +234,6 @@ mod imp {
             deadline: seconds.map(|s| Instant::now() + s),
             result: Ok(()),
         };
-        println!("Connecting to {addr}...");
         event_loop.run_app(&mut app)?;
         app.ungrab();
         app.hook = None;
@@ -250,11 +248,134 @@ mod imp {
         app.result
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// A connection that got through pairing and was welcomed.
+    struct Session {
+        ep: quinn::Endpoint,
+        conn: quinn::Connection,
+        send: quinn::SendStream,
+        recv: quinn::RecvStream,
+        welcome: Welcome,
+    }
+
+    /// Asks in the console without blocking the network tasks.
+    async fn ask(prompt: &'static str, allow_empty: bool) -> Result<String> {
+        tokio::task::spawn_blocking(move || {
+            dialoguer::Input::<String>::new().with_prompt(prompt).allow_empty(allow_empty).interact_text()
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
+    async fn confirm(prompt: String) -> Result<bool> {
+        tokio::task::spawn_blocking(move || dialoguer::Confirm::new().with_prompt(prompt).default(false).interact())
+            .await?
+            .map_err(Into::into)
+    }
+
+    /// Connects, gets approved if this PC and the host don't know each other
+    /// yet, and waits for the host's welcome.
+    async fn connect(addr: SocketAddr, code: Option<PairCode>, screen: Option<(u32, u32)>) -> Result<Session> {
+        let id = Identity::load_or_create(&data_dir().join("identity"))?;
+        let mut trust = TrustStore::open()?;
+        let ep = client_endpoint(&id)?;
+        let conn = ep.connect(addr, SERVER_NAME)?.await.map_err(|e| {
+            anyhow!(
+                "could not connect ({e}). Check the address, that the host is running, \
+                 and that its firewall allows Gamennetto."
+            )
+        })?;
+        // TLS proved the host holds the key behind this fingerprint.
+        let host_fp = peer_fingerprint(&conn)?;
+        let known_host = trust.find(Role::Host, &host_fp).map(|d| d.name.clone());
+        let (mut send, mut recv) = conn.open_bi().await?;
+        let name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "viewer".into());
+        let hello = ViewerMsg::Hello { version: PROTOCOL_VERSION, name, screen, pair: known_host.is_none() };
+        write_msg(&mut send, &hello).await?;
+
+        let mut paired = false;
+        let welcome = loop {
+            match read_msg::<HostMsg>(&mut recv).await? {
+                HostMsg::PairingRequired { by_code, by_approval } => {
+                    pair(&conn, &mut send, &mut recv, code, by_code, by_approval).await?;
+                    paired = true;
+                }
+                HostMsg::Welcome { name, width, height, fps, control_allowed, extend, .. } => {
+                    break Welcome { name, width, height, fps, control: control_allowed, extend };
+                }
+                HostMsg::Busy => bail!("the host is busy: another viewer is already connected"),
+                HostMsg::Error { message } => bail!("the host could not start sharing: {message}"),
+                HostMsg::PairRefused { reason } => bail!("not allowed: {reason}"),
+                other => bail!("unexpected answer from host: {other:?}"),
+            }
+        };
+        // A host this PC doesn't know must have gone through pairing; one
+        // that skips it is not the host it claims to be.
+        if known_host.is_none() && !paired {
+            bail!("this host is not approved on this PC and did not ask for approval: not connecting");
+        }
+        if paired {
+            if trust.same_name_other_key(Role::Host, &welcome.name, &host_fp) {
+                println!("  Note: {} was approved before with another identity (reinstalled?).", welcome.name);
+            }
+            trust.add(Role::Host, &welcome.name, &host_fp);
+            trust.save()?;
+            println!("  {} approved. Next time this PC connects to it without a code.", welcome.name);
+        }
+        Ok(Session { ep, conn, send, recv, welcome })
+    }
+
+    /// The first connection between this PC and the host: a code, or
+    /// comparing a number on both screens.
+    async fn pair(
+        conn: &quinn::Connection,
+        send: &mut quinn::SendStream,
+        recv: &mut quinn::RecvStream,
+        code: Option<PairCode>,
+        by_code: bool,
+        by_approval: bool,
+    ) -> Result<()> {
+        let binding = session_binding(conn)?;
+        let interactive = crate::ui::interactive();
+        println!("\nThis PC and the host don't know each other yet: approve this connection once.");
+        let how = match code {
+            Some(c) => ViewerPairing::Code(c),
+            None if !interactive => bail!("this PC isn't approved by the host yet: give its code with --code"),
+            None => loop {
+                let typed = if by_approval {
+                    ask("Type the 6-digit code shown on the host, or press Enter to approve it there instead", true)
+                        .await?
+                } else {
+                    ask("Type the 6-digit code shown on the host", false).await?
+                };
+                if typed.trim().is_empty() && by_approval {
+                    break ViewerPairing::Approval;
+                }
+                match PairCode::parse(&typed) {
+                    Ok(c) => break ViewerPairing::Code(c),
+                    Err(e) => println!("  {e}"),
+                }
+            },
+        };
+        if matches!(how, ViewerPairing::Code(_)) && !by_code {
+            bail!("the host isn't accepting codes right now (too many wrong ones); wait a minute");
+        }
+        let approval = matches!(how, ViewerPairing::Approval);
+        let number = format_number(check_number(&binding));
+        if approval {
+            println!("  Your number: {number}");
+            println!("  On the host, allow the connection only if it shows the same number. Waiting...");
+        }
+        viewer_pair(send, recv, &binding, how).await?;
+        // The number check counts only if both screens really showed it:
+        // this catches a fake host that just says yes.
+        if approval && !confirm(format!("Did the host show {number}?")).await? {
+            bail!("not connecting: the numbers didn't match");
+        }
+        Ok(())
+    }
+
     async fn net_task(
-        addr: SocketAddr,
-        code: PairingCode,
-        screen: Option<(u32, u32)>,
+        session: Session,
         proxy: EventLoopProxy<UserEvent>,
         frames: std_mpsc::Sender<VideoPacket>,
         mut to_host: mpsc::UnboundedReceiver<ViewerMsg>,
@@ -262,32 +383,8 @@ mod imp {
         mut bye: tokio::sync::oneshot::Receiver<()>,
     ) {
         let p = proxy.clone();
+        let Session { ep, conn, mut send, mut recv, .. } = session;
         let result: Result<()> = async {
-            let ep = client_endpoint(code)?;
-            let conn = ep.connect(addr, SERVER_NAME)?.await.map_err(|e| {
-                anyhow!(
-                    "could not connect ({e}). Check the address and the pairing code, \
-                     and that the host's firewall allows Gamennetto."
-                )
-            })?;
-            let (mut send, mut recv) = conn.open_bi().await?;
-            let name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "viewer".into());
-            write_msg(&mut send, &ViewerMsg::Hello { version: PROTOCOL_VERSION, name, screen }).await?;
-            match read_msg::<HostMsg>(&mut recv).await? {
-                HostMsg::Welcome { name, width, height, fps, control_allowed, extend, .. } => {
-                    let _ = p.send_event(UserEvent::Connected(Welcome {
-                        name,
-                        width,
-                        height,
-                        fps,
-                        control: control_allowed,
-                        extend,
-                    }));
-                }
-                HostMsg::Busy => bail!("the host is busy: another viewer is already connected"),
-                HostMsg::Error { message } => bail!("the host could not start sharing: {message}"),
-                other => bail!("unexpected answer from host: {other:?}"),
-            }
             let mut video = conn.accept_uni().await?;
 
             let video_task = async {
@@ -725,11 +822,11 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     use anyhow::Result;
-    use gamennetto_net::PairingCode;
+    use gamennetto_net::PairCode;
     use std::net::SocketAddr;
     use std::time::Duration;
 
-    pub fn run(_: SocketAddr, _: PairingCode, _: Option<Duration>) -> Result<()> {
+    pub fn run(_: SocketAddr, _: Option<PairCode>, _: Option<Duration>) -> Result<()> {
         anyhow::bail!("the viewer is only implemented on Windows for now")
     }
 }
