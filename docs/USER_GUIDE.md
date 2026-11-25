@@ -140,6 +140,8 @@ to remove it too. To remove only the driver: `gamennetto display uninstall`.
 | Problem | What to do |
 | --- | --- |
 | The viewer finds no host | Check both PCs are on the same Wi-Fi and the host window is open. Allow Gamennetto in Windows Firewall (Private networks). Or give the address shown by the host: `gamennetto view 192.168.1.20`. |
+| A VPN is on (ProtonVPN, NordVPN...) | Gamennetto uses your Wi-Fi/Ethernet address, not the VPN's, but the VPN may block local traffic: turn on its "Allow LAN connections" option, or turn it off while sharing. |
+| The host says port 48100 was busy | Nothing to do: it picked another port and viewers still find it. If you type the address by hand, include the port it shows, e.g. `gamennetto view 192.168.1.20:48101`. |
 | "the host is busy" | Another viewer is connected. Only one viewer at a time for now. |
 | Connection fails right away | Check the pairing code; it changes each time the host starts. |
 | Picture stutters or delay is high | Use **Fastest** quality, move closer to the router, or use 5 GHz Wi-Fi or a cable. |

@@ -27,9 +27,10 @@ enum Command {
         /// Let the viewer use this PC's mouse and keyboard.
         #[arg(long)]
         allow_control: bool,
-        /// Network address to listen on.
-        #[arg(long, default_value = "0.0.0.0:48100")]
-        bind: std::net::SocketAddr,
+        /// Network address to listen on, e.g. 0.0.0.0:48200. Default: port 48100,
+        /// or the next free one (48101-48109, then any) if it is busy.
+        #[arg(long)]
+        bind: Option<std::net::SocketAddr>,
         /// Don't announce this host on the network.
         #[arg(long)]
         no_discovery: bool,

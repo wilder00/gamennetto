@@ -10,7 +10,8 @@ pub struct Options {
     pub quality: Option<Quality>,
     pub fps: Option<u32>,
     pub mbps: Option<f64>,
-    pub bind: SocketAddr,
+    /// None: port 48100, or the next free one.
+    pub bind: Option<SocketAddr>,
     pub allow_control: bool,
     pub discovery: bool,
     /// Share a new virtual monitor (extend) instead of copying one (mirror).
@@ -41,7 +42,7 @@ mod imp {
     use gamennetto_input::{Injector, ScreenRect};
     use gamennetto_net::*;
     use gamennetto_vdisplay::SessionLock;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
@@ -129,7 +130,7 @@ mod imp {
 
         let id = HostIdentity::generate()?;
         let rt = tokio::runtime::Runtime::new()?;
-        let endpoint = rt.block_on(async { server_endpoint(&id, o.bind) })?;
+        let endpoint = rt.block_on(async { listen(&id, o.bind) })?;
         let port = endpoint.local_addr()?.port();
 
         let lan_ip = gamennetto_probe::probe().recommendation.lan_address.and_then(|a| a.parse::<Ipv4Addr>().ok());
@@ -154,10 +155,15 @@ mod imp {
         println!("  Quality:       {}", quality.title());
         println!("                 {}", quality.explain());
         println!("                 ({} fps, {} Mbit/s)", enc.fps, enc.mbps);
-        match lan_ip {
-            _ if !o.bind.ip().is_unspecified() => println!("  Address:       {} (only this address)", o.bind),
-            Some(ip) => println!("  Address:       {ip}:{port}"),
-            None => println!("  Address:       port {port} (no LAN address found)"),
+        match (o.bind, lan_ip) {
+            (Some(b), _) if !b.ip().is_unspecified() => {
+                println!("  Address:       {}:{port} (only this address)", b.ip())
+            }
+            (_, Some(ip)) => println!("  Address:       {ip}:{port}"),
+            (_, None) => println!("  Address:       port {port} (no LAN address found)"),
+        }
+        if o.bind.is_none() && port != DEFAULT_PORT {
+            println!("                 (port {DEFAULT_PORT} was busy; viewers on the network still find this host)");
         }
         println!("  Pairing code:  {}", id.code);
         println!(
@@ -201,6 +207,23 @@ mod imp {
             eprintln!("  The capture thread did not stop in time.");
         }
         Ok(())
+    }
+
+    /// Opens the network port. An address given with --bind is used as is;
+    /// otherwise port 48100, then 48101..=48109, then any free port. (Another
+    /// program, or a range Windows reserves for Hyper-V/WSL, may hold one.)
+    /// Viewers find the actual port through LAN discovery.
+    fn listen(id: &HostIdentity, bind: Option<SocketAddr>) -> Result<quinn::Endpoint> {
+        if let Some(addr) = bind {
+            return server_endpoint(id, addr);
+        }
+        let any = Ipv4Addr::UNSPECIFIED;
+        for port in DEFAULT_PORT..DEFAULT_PORT + 10 {
+            if let Ok(e) = server_endpoint(id, SocketAddr::from((any, port))) {
+                return Ok(e);
+            }
+        }
+        server_endpoint(id, SocketAddr::from((any, 0)))
     }
 
     /// Ctrl+C, Ctrl+Break, or the console window being closed.
