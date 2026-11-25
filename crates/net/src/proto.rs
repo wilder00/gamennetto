@@ -13,6 +13,10 @@ pub enum ViewerMsg {
         /// its virtual monitor this size, so the picture fills the screen.
         #[serde(default)]
         screen: Option<(u32, u32)>,
+        /// The viewer doesn't know this host yet and wants to pair, even if
+        /// the host already knows the viewer.
+        #[serde(default)]
+        pair: bool,
     },
     /// The viewer lost data or just joined: send a full picture.
     RequestKeyframe,
@@ -21,6 +25,14 @@ pub enum ViewerMsg {
         viewer_us: u64,
     },
     Input(InputEvent),
+    // Pairing (see pairing.rs).
+    PairByApproval,
+    PairByCode {
+        spake: Vec<u8>,
+    },
+    PairConfirm {
+        mac: Vec<u8>,
+    },
 }
 
 /// Host -> viewer, on the control stream.
@@ -47,6 +59,22 @@ pub enum HostMsg {
     /// The host could not start sharing; the message says why.
     Error {
         message: String,
+    },
+    // Pairing (see pairing.rs).
+    /// This viewer isn't approved yet; these are the ways to approve it.
+    PairingRequired {
+        by_code: bool,
+        by_approval: bool,
+    },
+    Paired,
+    PairRefused {
+        reason: String,
+    },
+    PairSpake {
+        spake: Vec<u8>,
+    },
+    PairConfirm {
+        mac: Vec<u8>,
     },
 }
 

@@ -27,9 +27,10 @@ enum Command {
         /// Let the viewer use this PC's mouse and keyboard.
         #[arg(long)]
         allow_control: bool,
-        /// Network address to listen on.
-        #[arg(long, default_value = "0.0.0.0:48100")]
-        bind: std::net::SocketAddr,
+        /// Network address to listen on, e.g. 0.0.0.0:48200. Default: port 48100,
+        /// or the next free one (48101-48109, then any) if it is busy.
+        #[arg(long)]
+        bind: Option<std::net::SocketAddr>,
         /// Don't announce this host on the network.
         #[arg(long)]
         no_discovery: bool,
@@ -58,12 +59,18 @@ enum Command {
     View {
         /// Host address, e.g. 192.168.1.20. Default: search the network.
         address: Option<String>,
-        /// Pairing code shown by the host. Default: ask.
+        /// The host's 6-digit code, only needed the first time. Default: ask
+        /// then (or approve on the host by comparing a number).
         #[arg(long)]
         code: Option<String>,
         /// Close after this many seconds (for testing).
         #[arg(long)]
         seconds: Option<u64>,
+    },
+    /// List or forget the PCs this PC has approved.
+    Devices {
+        #[command(subcommand)]
+        action: Option<devices::Action>,
     },
     /// Check what this machine can do (GPU, encoders, network, Android tools).
     Doctor {
@@ -113,6 +120,7 @@ enum Command {
 }
 
 mod capture_test;
+mod devices;
 mod display;
 mod encode_test;
 #[cfg(windows)]
@@ -142,6 +150,7 @@ fn main() -> anyhow::Result<()> {
         Command::Display { action } => display::run(action)?,
         Command::ResetDisplays => display::run(display::Action::Off)?,
         Command::Update { check } => update::run(check)?,
+        Command::Devices { action } => devices::run(action)?,
         Command::View { address, code, seconds } => {
             update::notify_in_background();
             view::run(view::Options { address, code, seconds })?;

@@ -6,6 +6,12 @@
 
 use gamennetto_net::{InputEvent, MouseButton};
 
+/// Put in the "extra info" of every key and mouse event the host types, so
+/// a viewer on the same PC can tell them apart from real typing and never
+/// sends them back (which would loop). Other programs' typed keys (keyboard
+/// tools, remote sessions) don't carry it and are treated as real.
+pub const INPUT_TAG: usize = 0x4741_4D45; // "GAME"
+
 /// The shared monitor's rectangle on the host desktop, in physical pixels.
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenRect {
@@ -110,7 +116,14 @@ mod win {
         INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
-                mi: MOUSEINPUT { dx, dy, mouseData: data as u32, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+                mi: MOUSEINPUT {
+                    dx,
+                    dy,
+                    mouseData: data as u32,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: super::INPUT_TAG,
+                },
             },
         }
     }
@@ -173,7 +186,7 @@ mod win {
                             wScan: (scancode & 0xFF) as u16,
                             dwFlags: flags,
                             time: 0,
-                            dwExtraInfo: 0,
+                            dwExtraInfo: super::INPUT_TAG,
                         },
                     },
                 }]);

@@ -9,65 +9,52 @@ Early development. PC to PC mirroring and extend mode work.
 ## Install
 Download `Gamennetto-X.Y.Z-setup.exe` from
 [Releases](https://github.com/wilder00/gamennetto/releases/latest) and run it
-(no administrator rights needed). It adds Start menu shortcuts and puts
-`gamennetto` on PATH. Update later with `gamennetto update`.
-Releases are automated: see [docs/VERSIONING.md](docs/VERSIONING.md).
+on both PCs (no administrator rights needed). It adds Start menu entries and
+puts `gamennetto` on PATH.
 
-### Share a screen between two PCs (same Wi-Fi/LAN)
-On the PC whose screen you want to share:
-```
-cargo run --release -- host                   # asks for quality, shows a pairing code
-cargo run --release -- host --allow-control   # also let the viewer use mouse and keyboard
-```
-On the other PC:
-```
-cargo run --release -- view                   # finds the host, asks for the pairing code
-cargo run --release -- view 192.168.1.20 --code ABCD-EF12-3456
-```
-In the viewer, like a virtual machine window:
-- **Click the picture** to control the host (only if it allowed control).
-  Then everything goes to the host, including Alt+Tab, the Windows key and
-  Alt+F4, and the mouse stays inside the window.
-- **Ctrl+Alt** (pressed and released on their own) gives your mouse and
-  keyboard back to your PC. So does switching away from the window.
-- **F11** full screen on/off. **Ctrl+Alt+Q** closes the viewer.
-- Ctrl+Alt+Del always stays on your PC (Windows doesn't allow otherwise).
-- Keys still held when the viewer lets go or disconnects are released on the host.
+**How to use it: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)** (mirror, extend,
+controlling the other PC, updates, troubleshooting).
 
-The first time, Windows Firewall asks whether to allow Gamennetto on the
-network: allow it on **private** networks. The viewer's title bar shows fps,
-delay (capture to screen) and data rate.
+## Quick reference
+On the PC that shares its screen (the host):
+```
+gamennetto host                          # mirror; asks for quality, shows a pairing code
+gamennetto host --allow-control          # also let the viewer use mouse and keyboard
+gamennetto display install               # once: driver for extend mode (asks for admin)
+gamennetto host --extend --allow-control # the viewer becomes an extra screen
+gamennetto reset-displays                # if the extra screen ever stays on
+```
+On the other PC (the viewer):
+```
+gamennetto view                          # finds the host; the first time, approve it
+gamennetto view 192.168.1.20 --code 482913
+```
+The first time two PCs connect, type the host's 6-digit code on the viewer, or
+press Enter and approve on the host by comparing a number. After that they
+remember each other and connect directly (`gamennetto devices` lists them).
+In the viewer: **click** the picture to control the host, **Ctrl+Alt** to get
+your mouse and keyboard back, **F11** full screen, **Ctrl+Alt+Q** close.
 
-### Use another PC as an extra screen (extend)
-Install the virtual monitor driver once (asks for administrator permission):
+Other commands:
 ```
-cargo run --release -- display install
-```
-Then share a new, extra screen instead of a copy:
-```
-cargo run --release -- host --extend                   # sized to the viewer's screen
-cargo run --release -- host --extend --size 1920x1080
-```
-The viewer opens full screen (F11 switches). The extra screen appears to the
-right of your screens when a viewer connects, and is removed 10 s after it
-leaves, or when the host stops. If it ever stays on by mistake:
-```
-cargo run --release -- reset-displays     # or press Win+P -> "PC screen only"
-cargo run --release -- display status
-cargo run --release -- display uninstall
+gamennetto update            # install the newest version
+gamennetto doctor            # what this PC can do: GPU, hardware encoders, network
+gamennetto display status    # the virtual monitor driver
+gamennetto devices           # approved PCs; `devices remove NAME` forgets one
+gamennetto --help            # everything else
 ```
 
-### Tools
+## Building from source
+Needs Rust (stable, MSVC) on Windows 10/11. Any command above works as
+`cargo run --release -- <command>`, e.g. `cargo run --release -- host`.
 ```
-cargo run -- doctor          # detect GPU, hardware encoders, network, Android tools
-cargo run -- doctor --json
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo run -- capture-test    # capture the screen for 5 s, report fps, save a screenshot
 cargo run -- encode-test     # capture + hardware H.264 encode to encode-test.h264
-cargo run -- encode-test --width 1920 --mbps 10   # scaled to 1080p, 10 Mbit/s
 ```
-
-`doctor` adapts to any machine: it lists what is installed, checks that each
-encoder actually starts, and prefers the encoder on the GPU that draws the screen.
+Releases are automated from Conventional Commits: see
+[docs/VERSIONING.md](docs/VERSIONING.md).
 
 ## Roadmap
 1. `doctor` (hardware detection) -- done
