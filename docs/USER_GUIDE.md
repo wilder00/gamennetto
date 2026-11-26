@@ -94,6 +94,7 @@ In the viewer window, it works like a virtual machine window:
 | **Ctrl+Alt** (press and release just those two) | Give your mouse and keyboard back to your own PC. |
 | Switching to another window | Also gives them back. |
 | **F11** | Full screen on/off. Never sent to the host. |
+| **Ctrl+Alt+S** | Picture size: **fit** (as big as possible, whole picture; the default), **fill** (whole window, edges trimmed) or **actual size** (pixel for pixel). Start with one using `gamennetto view --scale fill`. |
 | **Ctrl+Alt+Q** | Close the viewer. |
 
 The title bar says **CONTROLLING** while you control the host.
@@ -167,6 +168,7 @@ to remove it too. To remove only the driver: `gamennetto display uninstall`.
 | "not allowed" | The host said no, or nobody answered there within 60 s. Try again and type `y` on the host. |
 | Connection fails right away | Both PCs need the same Gamennetto version: run `gamennetto update` on both. |
 | A PC should no longer connect | On the host: `gamennetto devices remove NAME`. |
+| Black bars beside or above the picture | The two screens have different shapes (e.g. 16:10 and 16:9). Press F11 for full screen, and **Ctrl+Alt+S** for *fill* to cover the screen without stretching (a little of the edges is trimmed). In extend mode the extra screen already has your screen's shape. |
 | Picture stutters or delay is high | Use **Fastest** quality, move closer to the router, or use 5 GHz Wi-Fi or a cable. |
 | "no hardware encoder" or sharing won't start | Run `gamennetto doctor` and check "What Gamennetto would use". Sharing needs a GPU with a video encoder for now. |
 | The extra screen stayed on | `gamennetto reset-displays`, or Win+P > PC screen only. |

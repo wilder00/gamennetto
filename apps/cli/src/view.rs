@@ -12,13 +12,14 @@ pub struct Options {
     pub code: Option<String>,
     /// Close automatically after this many seconds (for tests).
     pub seconds: Option<u64>,
+    pub scale: gamennetto_decode::ScaleMode,
 }
 
 pub fn run(o: Options) -> Result<()> {
     let addr = resolve_address(o.address.as_deref())?;
     // Only needed the first time; asked for then if not given here.
     let code = o.code.as_deref().map(PairCode::parse).transpose()?;
-    imp::run(addr, code, o.seconds.map(Duration::from_secs))
+    imp::run(addr, code, o.seconds.map(Duration::from_secs), o.scale)
 }
 
 fn parse_address(s: &str) -> Result<SocketAddr> {
@@ -102,7 +103,7 @@ mod imp {
     use super::ClockSync;
     use crate::grab::{GrabEvent, KeyboardHook};
     use anyhow::{anyhow, bail, Result};
-    use gamennetto_decode::{create_device, H264Decoder, Presenter};
+    use gamennetto_decode::{create_device, window_to_screen, H264Decoder, Presenter, ScaleMode};
     use gamennetto_input::Held;
     use gamennetto_net::*;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -173,6 +174,7 @@ mod imp {
         window: Option<Arc<Window>>,
         device: Option<windows::Win32::Graphics::Direct3D11::ID3D11Device>,
         presenter: Option<Presenter>,
+        scale: ScaleMode,
         decoder: Option<H264Decoder>,
         welcome: Option<Welcome>,
         waiting_for_keyframe: bool,
@@ -183,7 +185,7 @@ mod imp {
         result: Result<()>,
     }
 
-    pub fn run(addr: SocketAddr, code: Option<PairCode>, seconds: Option<Duration>) -> Result<()> {
+    pub fn run(addr: SocketAddr, code: Option<PairCode>, seconds: Option<Duration>, scale: ScaleMode) -> Result<()> {
         let rt = tokio::runtime::Runtime::new()?;
         // Our main screen's size: in extend mode the host makes its virtual
         // monitor this size, so it fills our screen exactly.
@@ -225,6 +227,7 @@ mod imp {
             window: None,
             device: None,
             presenter: None,
+            scale,
             decoder: None,
             welcome: None,
             waiting_for_keyframe: true,
@@ -586,6 +589,15 @@ mod imp {
             }
         }
 
+        fn cycle_scale(&mut self) {
+            self.scale = self.scale.next();
+            if let Some(p) = self.presenter.as_mut() {
+                p.mode = self.scale;
+            }
+            println!("Picture size: {}  (Ctrl+Alt+S changes it)", self.scale.describe());
+            self.redraw();
+        }
+
         fn toggle_fullscreen(&self) {
             if let Some(win) = &self.window {
                 let full = win.fullscreen().is_some();
@@ -616,6 +628,8 @@ mod imp {
                 Ok((w, d, p)) => {
                     self.window = Some(w);
                     self.device = Some(d);
+                    let mut p = p;
+                    p.mode = self.scale;
                     self.presenter = Some(p);
                     let proxy = self.proxy.clone();
                     match KeyboardHook::install(move |ev| {
@@ -661,7 +675,7 @@ mod imp {
                         println!("  Click the picture: your mouse and keyboard then control {} (Alt+Tab too).", w.name);
                         println!("  Ctrl+Alt: get your mouse and keyboard back.");
                     }
-                    println!("  F11: full screen on/off.   Ctrl+Alt+Q: close the viewer.");
+                    println!("  F11: full screen on/off.   Ctrl+Alt+S: picture size.   Ctrl+Alt+Q: close the viewer.");
                     let Some(device) = &self.device else { return };
                     match H264Decoder::new(device, w.width, w.height, w.fps) {
                         Ok(d) => self.decoder = Some(d),
@@ -686,6 +700,7 @@ mod imp {
                         GrabEvent::Key { scancode, down } => self.send_input(InputEvent::Key { scancode, down }),
                         GrabEvent::Release => self.ungrab(),
                         GrabEvent::ToggleFullscreen => self.toggle_fullscreen(),
+                        GrabEvent::CycleScale => self.cycle_scale(),
                         GrabEvent::Quit => {
                             self.ungrab();
                             el.exit();
@@ -714,7 +729,11 @@ mod imp {
                 WindowEvent::Moved(_) => self.clip_cursor(),
                 WindowEvent::Resized(size) => {
                     if let Some(p) = self.presenter.as_mut() {
-                        let _ = p.resize(size.width, size.height);
+                        if let Err(e) = p.resize(size.width, size.height) {
+                            eprintln!("Resizing the picture to {}x{} failed: {e:#}", size.width, size.height);
+                        } else if debug() {
+                            eprintln!("[window] resized to {}x{}", size.width, size.height);
+                        }
                     }
                     self.clip_cursor();
                     self.redraw();
@@ -722,13 +741,8 @@ mod imp {
                 WindowEvent::RedrawRequested => self.redraw(),
                 WindowEvent::CursorMoved { position, .. } => {
                     let Some(p) = &self.presenter else { return };
-                    let (l, t, w, h) = p.picture_rect;
-                    if w == 0 || h == 0 {
-                        return;
-                    }
-                    let x = (position.x as f32 - l as f32) / w as f32;
-                    let y = (position.y as f32 - t as f32) / h as f32;
-                    if (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y) {
+                    let ((src, dst), (w, h)) = (p.shown, p.picture_size);
+                    if let Some((x, y)) = window_to_screen(position.x, position.y, src, dst, w, h) {
                         self.send_input(InputEvent::MouseMove { x, y });
                     }
                 }
@@ -784,6 +798,11 @@ mod imp {
                                         self.ungrab();
                                         el.exit();
                                     }
+                                    PhysicalKey::Code(KeyCode::KeyS) if shortcut => {
+                                        if down && !event.repeat {
+                                            self.cycle_scale();
+                                        }
+                                    }
                                     _ => self.send_input(InputEvent::Key { scancode, down }),
                                 }
                             }
@@ -797,6 +816,9 @@ mod imp {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::F11) => self.toggle_fullscreen(),
                         PhysicalKey::Code(KeyCode::KeyQ) if self.mods.control_key() && self.mods.alt_key() => el.exit(),
+                        PhysicalKey::Code(KeyCode::KeyS) if self.mods.control_key() && self.mods.alt_key() => {
+                            self.cycle_scale()
+                        }
                         _ => {}
                     }
                 }
@@ -826,7 +848,7 @@ mod imp {
     use std::net::SocketAddr;
     use std::time::Duration;
 
-    pub fn run(_: SocketAddr, _: Option<PairCode>, _: Option<Duration>) -> Result<()> {
+    pub fn run(_: SocketAddr, _: Option<PairCode>, _: Option<Duration>, _: gamennetto_decode::ScaleMode) -> Result<()> {
         anyhow::bail!("the viewer is only implemented on Windows for now")
     }
 }

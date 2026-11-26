@@ -24,6 +24,7 @@ pub const SC_RCTRL: u32 = 0xE01D;
 pub const SC_ALT: u32 = 0x38;
 pub const SC_RALT: u32 = 0xE038;
 pub const SC_Q: u32 = 0x10;
+pub const SC_S: u32 = 0x1F;
 pub const SC_F11: u32 = 0x57;
 
 /// What the hook tells the viewer.
@@ -37,6 +38,8 @@ pub enum GrabEvent {
     Quit,
     /// F11: full screen on/off.
     ToggleFullscreen,
+    /// Ctrl+Alt+S: next picture size (fit, fill, actual size).
+    CycleScale,
 }
 
 /// Decides what each key means while grabbed. Kept apart from the hook so
@@ -83,6 +86,13 @@ impl Shortcuts {
             SC_Q if self.ctrl && self.alt => {
                 if down {
                     vec![GrabEvent::Quit]
+                } else {
+                    vec![]
+                }
+            }
+            SC_S if self.ctrl && self.alt => {
+                if down {
+                    vec![GrabEvent::CycleScale]
                 } else {
                     vec![]
                 }
@@ -316,6 +326,8 @@ mod tests {
         s.on_key(SC_ALT, true);
         assert_eq!(s.on_key(SC_Q, true), vec![Quit]);
         assert_eq!(s.on_key(SC_Q, false), vec![]);
+        assert_eq!(s.on_key(SC_S, true), vec![CycleScale]);
+        assert_eq!(s.on_key(SC_S, false), vec![]);
         let mut s = Shortcuts::default();
         assert_eq!(s.on_key(SC_F11, true), vec![ToggleFullscreen]);
         assert_eq!(s.on_key(SC_F11, false), vec![]);

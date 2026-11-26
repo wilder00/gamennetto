@@ -33,7 +33,8 @@ The first time two PCs connect, type the host's 6-digit code on the viewer, or
 press Enter and approve on the host by comparing a number. After that they
 remember each other and connect directly (`gamennetto devices` lists them).
 In the viewer: **click** the picture to control the host, **Ctrl+Alt** to get
-your mouse and keyboard back, **F11** full screen, **Ctrl+Alt+Q** close.
+your mouse and keyboard back, **F11** full screen, **Ctrl+Alt+S** picture size
+(fit / fill / actual), **Ctrl+Alt+Q** close.
 
 Other commands:
 ```

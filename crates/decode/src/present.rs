@@ -7,12 +7,12 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 
-use crate::letterbox;
+use crate::{place, Rect, ScaleMode};
 
 /// A video processor and the (src_w, src_h, dst_w, dst_h) it was made for.
 type CachedProcessor = (ID3D11VideoProcessorEnumerator, ID3D11VideoProcessor, (u32, u32, u32, u32));
 
-/// Draws NV12 pictures into a window, scaled to fit with black bars.
+/// Draws NV12 pictures into a window, scaled by `mode` without distortion.
 /// Colour conversion and scaling run on the GPU's video hardware.
 pub struct Presenter {
     device: ID3D11Device,
@@ -21,8 +21,11 @@ pub struct Presenter {
     video_context: ID3D11VideoContext,
     swapchain: IDXGISwapChain1,
     processor: Option<CachedProcessor>,
-    /// Where the picture was last drawn: (left, top, width, height).
-    pub picture_rect: (u32, u32, u32, u32),
+    pub mode: ScaleMode,
+    /// Last drawn: the part of the picture shown, and where in the window.
+    pub shown: (Rect, Rect),
+    /// Size of the last picture drawn.
+    pub picture_size: (u32, u32),
 }
 
 impl Presenter {
@@ -53,7 +56,9 @@ impl Presenter {
                 video_context: device.GetImmediateContext()?.cast()?,
                 swapchain,
                 processor: None,
-                picture_rect: (0, 0, 0, 0),
+                mode: ScaleMode::default(),
+                shown: ((0, 0, 0, 0), (0, 0, 0, 0)),
+                picture_size: (0, 0),
             })
         }
     }
@@ -128,10 +133,11 @@ impl Presenter {
         }
         let (en, vp, _) = self.processor.as_ref().unwrap();
 
-        let (l, t, pw, ph) = letterbox(w, h, bw, bh);
-        self.picture_rect = (l, t, pw, ph);
+        let ((sl, st, sw, sh), (l, t, pw, ph)) = place(self.mode, w, h, bw, bh);
+        self.shown = ((sl, st, sw, sh), (l, t, pw, ph));
+        self.picture_size = (w, h);
         let vc = &self.video_context;
-        let src = RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 };
+        let src = RECT { left: sl as i32, top: st as i32, right: (sl + sw) as i32, bottom: (st + sh) as i32 };
         let dst = RECT { left: l as i32, top: t as i32, right: (l + pw) as i32, bottom: (t + ph) as i32 };
         let full = RECT { left: 0, top: 0, right: bw as i32, bottom: bh as i32 };
         vc.VideoProcessorSetStreamSourceRect(vp, 0, true, Some(&src));

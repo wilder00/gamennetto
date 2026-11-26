@@ -66,6 +66,11 @@ enum Command {
         /// Close after this many seconds (for testing).
         #[arg(long)]
         seconds: Option<u64>,
+        /// Picture size: fit (as big as possible, whole picture), fill (whole
+        /// window, edges trimmed) or actual (pixel for pixel). Ctrl+Alt+S
+        /// changes it while viewing.
+        #[arg(long, value_enum, default_value_t = Scale::Fit)]
+        scale: Scale,
     },
     /// List or forget the PCs this PC has approved.
     Devices {
@@ -119,6 +124,14 @@ enum Command {
     },
 }
 
+/// `view --scale`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Scale {
+    Fit,
+    Fill,
+    Actual,
+}
+
 mod capture_test;
 mod devices;
 mod display;
@@ -151,9 +164,14 @@ fn main() -> anyhow::Result<()> {
         Command::ResetDisplays => display::run(display::Action::Off)?,
         Command::Update { check } => update::run(check)?,
         Command::Devices { action } => devices::run(action)?,
-        Command::View { address, code, seconds } => {
+        Command::View { address, code, seconds, scale } => {
             update::notify_in_background();
-            view::run(view::Options { address, code, seconds })?;
+            let scale = match scale {
+                Scale::Fit => gamennetto_decode::ScaleMode::Fit,
+                Scale::Fill => gamennetto_decode::ScaleMode::Fill,
+                Scale::Actual => gamennetto_decode::ScaleMode::Actual,
+            };
+            view::run(view::Options { address, code, seconds, scale })?;
         }
         Command::Doctor { json } => {
             let report = probe();

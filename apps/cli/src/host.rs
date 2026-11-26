@@ -397,7 +397,7 @@ mod imp {
                     let v = gamennetto_vdisplay::attach(w, h)?;
                     let guard = VirtualOn;
                     let gdi = v.gdi_name.context("the virtual monitor has no name")?;
-                    let mon = wait_for_monitor(&gdi)?;
+                    let mon = wait_for_monitor(&gdi, (w, h))?;
                     println!("  Virtual monitor on: {gdi} {}x{} (at {},{}).", mon.width, mon.height, mon.left, mon.top);
                     (mon, Some((w, h)), Some(guard))
                 }
@@ -410,7 +410,24 @@ mod imp {
                 bitrate: (e.mbps * 1_000_000.0) as u32,
                 keyframe_interval: e.fps * 2,
             };
-            let cap = Capturer::new(&mon, true)?;
+            // A monitor that was just turned on or resized may need a moment
+            // before Windows lets it be captured.
+            let mut mon = mon;
+            let mut tries = 0;
+            let cap = loop {
+                match Capturer::new(&mon, true) {
+                    Ok(c) => break c,
+                    Err(_) if virt.is_some() && tries < 10 => {
+                        tries += 1;
+                        std::thread::sleep(Duration::from_millis(300));
+                        // Look it up again: its handle may have changed.
+                        if let Some(m) = monitors()?.into_iter().find(|m| m.name.eq_ignore_ascii_case(&mon.name)) {
+                            mon = m;
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
+            };
             let conv = Converter::new(cap.device(), mon.width, mon.height, w, h)?;
             let enc = H264Encoder::new(cap.device(), &cfg)?;
             println!("  Encoder:       {}", enc.name());
@@ -494,11 +511,17 @@ mod imp {
     }
 
     /// Waits until the capture side sees the new monitor.
-    fn wait_for_monitor(gdi: &str) -> Result<Monitor> {
+    /// Waits until the capture side sees the new monitor at the size asked
+    /// for (right after a driver restart Windows may still show the old one).
+    fn wait_for_monitor(gdi: &str, size: (u32, u32)) -> Result<Monitor> {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(m) = monitors()?.into_iter().find(|m| m.name.eq_ignore_ascii_case(gdi)) {
-                return Ok(m);
+            let found = monitors()?.into_iter().find(|m| m.name.eq_ignore_ascii_case(gdi));
+            match found {
+                Some(m) if (m.width, m.height) == size => return Ok(m),
+                // Wrong size still: use it only when time is up.
+                Some(m) if Instant::now() > end => return Ok(m),
+                _ => {}
             }
             if Instant::now() > end {
                 bail!("the virtual monitor {gdi} can't be captured (it was not found among the GPU's screens)");
