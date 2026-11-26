@@ -199,6 +199,27 @@ fn always_extended(vk: u32) -> bool {
     )
 }
 
+const VK_RSHIFT: u32 = 0xA1;
+const VK_NUMLOCK: u32 = 0x90;
+
+/// The scan code the host must press for a key seen by the hook.
+///
+/// Windows marks right Shift and Num Lock as "extended" in the hook, but
+/// their real scan codes have no 0xE0 prefix (0x36 and 0x45). With the
+/// prefix, the host got a code that isn't Shift at all, so right Shift + 1
+/// typed "1" instead of "!".
+fn host_scancode(vk: u32, scan: u32, extended_flag: bool) -> u32 {
+    let scan = scan & 0xFF;
+    if vk == VK_RSHIFT || vk == VK_NUMLOCK {
+        return scan;
+    }
+    if extended_flag || always_extended(vk) {
+        scan | 0xE000
+    } else {
+        scan
+    }
+}
+
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let active = ACTIVE.load(Ordering::SeqCst);
     if code >= 0 && DEBUG.load(Ordering::Relaxed) {
@@ -215,13 +236,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // tools, remote sessions) are taken like real ones.
         let ours = k.dwExtraInfo == gamennetto_input::INPUT_TAG;
         if !ours {
-            let mut sc = k.scanCode;
-            if sc == 0 {
-                sc = MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) & 0xFF;
+            let mut scan = k.scanCode;
+            if scan == 0 {
+                scan = MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) & 0xFF;
             }
-            if k.flags.0 & LLKHF_EXTENDED.0 != 0 || always_extended(k.vkCode) {
-                sc |= 0xE000;
-            }
+            let sc = host_scancode(k.vkCode, scan, k.flags.0 & LLKHF_EXTENDED.0 != 0);
             let down = k.flags.0 & LLKHF_UP.0 == 0;
             if let Ok(mut guard) = STATE.try_lock() {
                 if let Some((shortcuts, sink)) = guard.as_mut() {
@@ -275,6 +294,8 @@ mod tests {
             key(VK_TAB, false),
             key(VK_TAB, true),
             key(VK_MENU, true),
+            key(VK_RSHIFT, false),
+            key(VK_RSHIFT, true),
         ];
         unsafe { SendInput(&keys, std::mem::size_of::<INPUT>() as i32) };
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -288,6 +309,19 @@ mod tests {
             .collect();
         assert!(downs.contains(&0xE05B), "Windows key not taken: {got:?}");
         assert!(downs.contains(&SC_ALT) && downs.contains(&0x0F), "Alt+Tab not taken: {got:?}");
+        assert!(downs.contains(&0x36), "right Shift not sent as 0x36: {got:?}");
+    }
+
+    #[test]
+    fn scan_codes_sent_to_the_host() {
+        // Right Shift: Windows says "extended", but it is plain 0x36.
+        assert_eq!(host_scancode(0xA1, 0x36, true), 0x36);
+        assert_eq!(host_scancode(0xA0, 0x2A, false), 0x2A); // left Shift
+        assert_eq!(host_scancode(0x90, 0x45, true), 0x45); // Num Lock
+        assert_eq!(host_scancode(0xA3, 0x1D, true), 0xE01D); // right Ctrl
+        assert_eq!(host_scancode(0x5B, 0x5B, false), 0xE05B); // Windows key, even unmarked
+        assert_eq!(host_scancode(0x26, 0x48, true), 0xE048); // arrow up
+        assert_eq!(host_scancode(0x31, 0x02, false), 0x02); // "1"
     }
 
     #[test]
