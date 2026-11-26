@@ -53,6 +53,18 @@ pub struct Shortcuts {
 }
 
 impl Shortcuts {
+    /// Like `on_key`, but `altgr_ctrl` marks the Ctrl Windows adds for AltGr:
+    /// it is sent to the host (which needs it to type AltGr characters) but
+    /// never counts as Ctrl for our Ctrl+Alt shortcuts, or AltGr would hand
+    /// control back and AltGr+Q (@ on Latin American keyboards) would close
+    /// the viewer.
+    pub fn handle(&mut self, scancode: u32, down: bool, altgr_ctrl: bool) -> Vec<GrabEvent> {
+        if altgr_ctrl {
+            return vec![GrabEvent::Key { scancode, down }];
+        }
+        self.on_key(scancode, down)
+    }
+
     /// Returns the events for one key press/release, in order.
     pub fn on_key(&mut self, scancode: u32, down: bool) -> Vec<GrabEvent> {
         let is_ctrl = scancode == SC_CTRL || scancode == SC_RCTRL;
@@ -194,29 +206,37 @@ fn always_extended(vk: u32) -> bool {
             ..=0x28      // Page Up/Down, End, Home, arrows
         | 0x2D | 0x2E      // Insert, Delete
         | 0xA3 | 0xA5      // right Ctrl, right Alt
-        | 0x6F             // numpad /
-        | 0x2C // Print Screen
+        | 0x6F // numpad /
     )
 }
 
+const VK_PAUSE: u32 = 0x13;
+const VK_SNAPSHOT: u32 = 0x2C;
 const VK_RSHIFT: u32 = 0xA1;
+const VK_LCONTROL: u32 = 0xA2;
 const VK_NUMLOCK: u32 = 0x90;
 
-/// The scan code the host must press for a key seen by the hook.
-///
-/// Windows marks right Shift and Num Lock as "extended" in the hook, but
-/// their real scan codes have no 0xE0 prefix (0x36 and 0x45). With the
-/// prefix, the host got a code that isn't Shift at all, so right Shift + 1
-/// typed "1" instead of "!".
+/// The Ctrl that Windows adds when AltGr is pressed (Spanish, German...
+/// keyboards) has this scan code in the hook.
+const ALTGR_CTRL_SCAN: u32 = 0x21D;
+
+/// The scan code the host must press for a key seen by the hook, checked
+/// against Windows' own table (MapVirtualKey):
+/// - right Shift and Num Lock are marked "extended" in the hook, but are
+///   plain 0x36 and 0x45; with 0xE0 they are no key at all (right Shift + 1
+///   typed "1" instead of "!");
+/// - Pause shows up as 0x45, which is Num Lock; its real code is E1 1D
+///   (sent as `gamennetto_net::SCAN_PAUSE`);
+/// - Alt + Print Screen is plain 0x54; Print Screen alone is E0 37.
 fn host_scancode(vk: u32, scan: u32, extended_flag: bool) -> u32 {
     let scan = scan & 0xFF;
-    if vk == VK_RSHIFT || vk == VK_NUMLOCK {
-        return scan;
-    }
-    if extended_flag || always_extended(vk) {
-        scan | 0xE000
-    } else {
-        scan
+    match vk {
+        VK_PAUSE => gamennetto_net::SCAN_PAUSE,
+        VK_RSHIFT | VK_NUMLOCK => scan,
+        VK_SNAPSHOT if scan == 0x54 => 0x54,
+        VK_SNAPSHOT => 0xE037,
+        _ if extended_flag || always_extended(vk) => scan | 0xE000,
+        _ => scan,
     }
 }
 
@@ -241,10 +261,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 scan = MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) & 0xFF;
             }
             let sc = host_scancode(k.vkCode, scan, k.flags.0 & LLKHF_EXTENDED.0 != 0);
+            // AltGr's added Ctrl goes to the host (it needs it for AltGr),
+            // but isn't Ctrl for our own Ctrl+Alt shortcuts.
+            let altgr_ctrl = k.vkCode == VK_LCONTROL && k.scanCode == ALTGR_CTRL_SCAN;
             let down = k.flags.0 & LLKHF_UP.0 == 0;
             if let Ok(mut guard) = STATE.try_lock() {
                 if let Some((shortcuts, sink)) = guard.as_mut() {
-                    for ev in shortcuts.on_key(sc, down) {
+                    for ev in shortcuts.handle(sc, down, altgr_ctrl) {
                         sink(ev);
                     }
                     // Swallow the key: this PC must not act on it.
@@ -318,10 +341,33 @@ mod tests {
         assert_eq!(host_scancode(0xA1, 0x36, true), 0x36);
         assert_eq!(host_scancode(0xA0, 0x2A, false), 0x2A); // left Shift
         assert_eq!(host_scancode(0x90, 0x45, true), 0x45); // Num Lock
+        assert_eq!(host_scancode(0x13, 0x45, false), gamennetto_net::SCAN_PAUSE); // Pause, not Num Lock
+        assert_eq!(host_scancode(0x2C, 0x37, true), 0xE037); // Print Screen
+        assert_eq!(host_scancode(0x2C, 0x54, false), 0x54); // Alt + Print Screen
+        assert_eq!(host_scancode(0x0D, 0x1C, true), 0xE01C); // numpad Enter
+        assert_eq!(host_scancode(0x67, 0x47, false), 0x47); // numpad 7
         assert_eq!(host_scancode(0xA3, 0x1D, true), 0xE01D); // right Ctrl
         assert_eq!(host_scancode(0x5B, 0x5B, false), 0xE05B); // Windows key, even unmarked
         assert_eq!(host_scancode(0x26, 0x48, true), 0xE048); // arrow up
         assert_eq!(host_scancode(0x31, 0x02, false), 0x02); // "1"
+    }
+
+    #[test]
+    fn altgr_is_not_ctrl_alt() {
+        let mut s = Shortcuts::default();
+        // AltGr down: Windows' added Ctrl, then right Alt.
+        assert_eq!(s.handle(SC_CTRL, true, true), vec![Key { scancode: SC_CTRL, down: true }]);
+        assert_eq!(s.handle(SC_RALT, true, false), vec![Key { scancode: SC_RALT, down: true }]);
+        // AltGr+Q types @ on the host instead of closing the viewer.
+        assert_eq!(s.handle(SC_Q, true, false), vec![Key { scancode: SC_Q, down: true }]);
+        assert_eq!(s.handle(SC_Q, false, false), vec![Key { scancode: SC_Q, down: false }]);
+        // Letting go of AltGr doesn't hand control back.
+        assert_eq!(s.handle(SC_CTRL, false, true), vec![Key { scancode: SC_CTRL, down: false }]);
+        assert_eq!(s.handle(SC_RALT, false, false), vec![Key { scancode: SC_RALT, down: false }]);
+        // A real Ctrl+Alt still does.
+        s.handle(SC_CTRL, true, false);
+        s.handle(SC_ALT, true, false);
+        assert_eq!(s.handle(SC_ALT, false, false), vec![Key { scancode: SC_ALT, down: false }, Release]);
     }
 
     #[test]

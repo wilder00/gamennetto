@@ -171,8 +171,10 @@ mod win {
                 }
             }
             InputEvent::Key { scancode, down } => {
-                let mut flags = KEYEVENTF_SCANCODE;
-                if scancode & 0xFF00 == 0xE000 {
+                // Pause has no one-number scan code: press it by key name.
+                let by_name = scancode == gamennetto_net::SCAN_PAUSE;
+                let mut flags = if by_name { KEYBD_EVENT_FLAGS(0) } else { KEYEVENTF_SCANCODE };
+                if !by_name && scancode & 0xFF00 == 0xE000 {
                     flags |= KEYEVENTF_EXTENDEDKEY;
                 }
                 if !down {
@@ -182,8 +184,8 @@ mod win {
                     r#type: INPUT_KEYBOARD,
                     Anonymous: INPUT_0 {
                         ki: KEYBDINPUT {
-                            wVk: VIRTUAL_KEY(0),
-                            wScan: (scancode & 0xFF) as u16,
+                            wVk: if by_name { VK_PAUSE } else { VIRTUAL_KEY(0) },
+                            wScan: if by_name { 0 } else { (scancode & 0xFF) as u16 },
                             dwFlags: flags,
                             time: 0,
                             dwExtraInfo: super::INPUT_TAG,

@@ -78,6 +78,10 @@ pub enum HostMsg {
     },
 }
 
+/// `InputEvent::Key` code for Pause, whose real scan code (E1 1D 45) has
+/// no single-number form; the host presses it by its key name.
+pub const SCAN_PAUSE: u32 = 0xE11D;
+
 /// Input sent from the viewer. Positions are 0.0..=1.0 across the shared
 /// screen, so they work whatever the two screen sizes are.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
