@@ -85,6 +85,13 @@ impl Injector {
         win::inject(&self.screen, ev);
     }
 
+    /// This PC's (Caps Lock, Num Lock, Scroll Lock), to send as `Locks`.
+    #[cfg(windows)]
+    pub fn local_locks() -> (bool, bool, bool) {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CAPITAL, VK_NUMLOCK, VK_SCROLL};
+        (win::lock_on(VK_CAPITAL), win::lock_on(VK_NUMLOCK), win::lock_on(VK_SCROLL))
+    }
+
     /// Releases every key and button the viewer left pressed.
     pub fn release_all(&self) {
         let events = self.held.lock().unwrap().release_all();
@@ -134,8 +141,31 @@ mod win {
         }
     }
 
+    /// Presses and releases a key by its name (Windows picks the scan code).
+    fn tap(vk: VIRTUAL_KEY) {
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: super::INPUT_TAG },
+            },
+        };
+        send(&[key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)]);
+    }
+
+    /// Whether Caps Lock / Num Lock / Scroll Lock is on here.
+    pub fn lock_on(vk: VIRTUAL_KEY) -> bool {
+        unsafe { GetKeyState(vk.0 as i32) & 1 != 0 }
+    }
+
     pub fn inject(screen: &ScreenRect, ev: InputEvent) {
         match ev {
+            InputEvent::Locks { caps, num, scroll } => {
+                for (vk, want) in [(VK_CAPITAL, caps), (VK_NUMLOCK, num), (VK_SCROLL, scroll)] {
+                    if lock_on(vk) != want {
+                        tap(vk);
+                    }
+                }
+            }
             InputEvent::MouseMove { x, y } => {
                 let (px, py) = screen.to_pixel(x, y);
                 // Absolute coordinates are 0..65535 across the whole virtual desktop.
@@ -208,6 +238,26 @@ mod tests {
         assert_eq!(r.to_pixel(0.0, 0.0), (-1920, 0));
         assert_eq!(r.to_pixel(1.0, 1.0), (-1, 1079));
         assert_eq!(r.to_pixel(2.0, -1.0), (-1, 0)); // clamped
+    }
+
+    /// Toggles Scroll Lock (harmless) through `Locks` and back. Run by hand:
+    /// `cargo test -p gamennetto-input locks -- --ignored`
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "presses Scroll Lock on this PC"]
+    fn locks_match_the_viewer() {
+        let inj = Injector::new(ScreenRect { left: 0, top: 0, width: 100, height: 100 });
+        let (caps, num, scroll) = Injector::local_locks();
+        inj.inject(InputEvent::Locks { caps, num, scroll: !scroll });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(Injector::local_locks(), (caps, num, !scroll), "Scroll Lock did not change");
+        // Same state again: nothing is pressed.
+        inj.inject(InputEvent::Locks { caps, num, scroll: !scroll });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(Injector::local_locks(), (caps, num, !scroll));
+        inj.inject(InputEvent::Locks { caps, num, scroll });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(Injector::local_locks(), (caps, num, scroll), "Scroll Lock was not put back");
     }
 
     #[test]

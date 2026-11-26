@@ -101,10 +101,17 @@ In the viewer window, it works like a virtual machine window:
 | **Ctrl+Alt+S** | Picture size: **fit** (as big as possible, whole picture; the default), **fill** (whole window, edges trimmed) or **actual size** (pixel for pixel). Start with one using `gamennetto view --scale fill`. |
 | **Ctrl+Alt+Q** | Close the viewer. |
 
-The title bar says **CONTROLLING** while you control the host.
-Ctrl+Alt+Del always stays on your own PC: Windows doesn't allow programs to
-send it. Windows running as administrator on the host (and its UAC prompts)
-can't be controlled unless the host runs Gamennetto as administrator too.
+The title bar says **CONTROLLING** while you control the host. When you take
+control, the host's **Caps Lock, Num Lock and Scroll Lock** are set like
+yours, so what you type comes out the same.
+
+Limits set by Windows:
+- Ctrl+Alt+Del always stays on your own PC: no program can send it.
+- Windows running **as administrator** on the host don't accept the viewer's
+  mouse and keyboard, unless the host runs Gamennetto as administrator too.
+  **Task Manager** is one of them (Windows 11 opens it as administrator):
+  while it is in front, clicks and keys don't reach it; click another window
+  to carry on. UAC prompts ("Do you want to allow...") can't be controlled.
 
 ## 4. Use the other PC as an extra screen (extend)
 

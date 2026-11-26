@@ -24,6 +24,10 @@ pub use proto::*;
 pub const DEFAULT_PORT: u16 = 48100;
 /// Name used in TLS between host and viewer (not a real DNS name).
 pub const SERVER_NAME: &str = "gamennetto";
-/// Bumped: viewers and hosts before pairing (0.1.0) can't talk to these.
+/// Bumped only for changes that old versions can't handle at all: viewers
+/// and hosts before pairing (0.1.0) can't talk to these.
 pub const ALPN: &[u8] = b"gamennetto/2";
-pub const PROTOCOL_VERSION: u32 = 2;
+/// Additions within one ALPN raise this; each side sends newer messages only
+/// when the other side's version is high enough.
+/// 3: `InputEvent::Locks`.
+pub const PROTOCOL_VERSION: u32 = 3;

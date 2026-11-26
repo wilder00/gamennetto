@@ -104,6 +104,14 @@ pub enum InputEvent {
         scancode: u32,
         down: bool,
     },
+    /// The viewer's Caps Lock, Num Lock and Scroll Lock (on = true). The host
+    /// toggles its own to match, so typing gives the same result. Sent only
+    /// to hosts with protocol 3 or newer.
+    Locks {
+        caps: bool,
+        num: bool,
+        scroll: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

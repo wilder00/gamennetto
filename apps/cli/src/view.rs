@@ -135,6 +135,9 @@ mod imp {
 
     #[derive(Clone)]
     struct Welcome {
+        /// The host's protocol version: newer messages only go to hosts
+        /// that understand them.
+        version: u32,
         name: String,
         width: u32,
         height: u32,
@@ -302,8 +305,8 @@ mod imp {
                     pair(&conn, &mut send, &mut recv, code, by_code, by_approval).await?;
                     paired = true;
                 }
-                HostMsg::Welcome { name, width, height, fps, control_allowed, extend, .. } => {
-                    break Welcome { name, width, height, fps, control: control_allowed, extend };
+                HostMsg::Welcome { version, name, width, height, fps, control_allowed, extend } => {
+                    break Welcome { version, name, width, height, fps, control: control_allowed, extend };
                 }
                 HostMsg::Busy => bail!("the host is busy: another viewer is already connected"),
                 HostMsg::Error { message } => bail!("the host could not start sharing: {message}"),
@@ -547,6 +550,12 @@ mod imp {
             self.grabbed = true;
             if let Some(h) = &self.hook {
                 h.set_active(true);
+            }
+            // Same Caps Lock / Num Lock / Scroll Lock as here, so typing on
+            // the host gives what you expect (e.g. numpad 7 is 7, not Home).
+            if self.welcome.as_ref().is_some_and(|w| w.version >= 3) {
+                let (caps, num, scroll) = gamennetto_input::Injector::local_locks();
+                self.send_input(InputEvent::Locks { caps, num, scroll });
             }
             self.clip_cursor();
             if let Some(w) = &self.window {
