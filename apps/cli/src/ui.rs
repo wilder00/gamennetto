@@ -15,6 +15,10 @@ pub fn select(prompt: &str, items: &[String], default: usize) -> Result<usize> {
     Ok(Select::with_theme(&ColorfulTheme::default()).with_prompt(prompt).items(items).default(default).interact()?)
 }
 
+pub fn confirm(prompt: &str, default: bool) -> Result<bool> {
+    Ok(dialoguer::Confirm::with_theme(&ColorfulTheme::default()).with_prompt(prompt).default(default).interact()?)
+}
+
 pub fn input(prompt: &str) -> Result<String> {
     Ok(Input::<String>::with_theme(&ColorfulTheme::default()).with_prompt(prompt).interact_text()?)
 }

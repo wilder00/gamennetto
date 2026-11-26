@@ -56,9 +56,9 @@ Source: "..\THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Each opens a console window, where Gamennetto asks its questions.
-Name: "{group}\Share this screen"; Filename: "{app}\gamennetto.exe"; Parameters: "host"; WorkingDir: "{app}"
-Name: "{group}\Use as extra screen (extend)"; Filename: "{app}\gamennetto.exe"; Parameters: "host --extend"; WorkingDir: "{app}"
-Name: "{group}\View another PC"; Filename: "{app}\gamennetto.exe"; Parameters: "view"; WorkingDir: "{app}"
+; --ask: step-by-step questions (mirror or extend, size, quality, control...).
+Name: "{group}\Share this screen"; Filename: "{app}\gamennetto.exe"; Parameters: "host --ask"; WorkingDir: "{app}"
+Name: "{group}\View another PC"; Filename: "{app}\gamennetto.exe"; Parameters: "view --ask"; WorkingDir: "{app}"
 Name: "{group}\Gamennetto terminal"; Filename: "{cmd}"; Parameters: "/k ""{app}\gamennetto.exe"" --help"; WorkingDir: "{%USERPROFILE}"
 Name: "{group}\Uninstall Gamennetto"; Filename: "{uninstallexe}"
 

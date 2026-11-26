@@ -21,14 +21,17 @@ You get these Start menu entries:
 
 | Start menu entry | What it does |
 | --- | --- |
-| **Share this screen** | Host, mirror mode, view only. |
-| **Use as extra screen (extend)** | Host, extend mode, view only. Needs the driver (step 4). |
-| **View another PC** | Viewer: finds hosts and asks for the pairing code. |
+| **Share this screen** | Host. Asks step by step: mirror or extend, which screen, size, quality, and whether the other PC may use your mouse and keyboard. |
+| **View another PC** | Viewer. Finds hosts on the network and asks the picture size. |
 | **Gamennetto terminal** | A terminal where you can type `gamennetto` commands. |
 
 Each one opens a console window: that window *is* Gamennetto. Closing it stops
-it. To let the viewer use your mouse and keyboard, start the host from a
-terminal with `--allow-control` (see step 3).
+it. Use the arrow keys and Enter to answer the questions.
+
+From a terminal, `gamennetto host --ask` (or `-i`) and `gamennetto view --ask`
+do the same. Without `--ask`, options come from the command line
+(`gamennetto host --help` lists them) and only the quality and the screen are
+asked.
 
 The first time each PC uses the network, **Windows Firewall** asks whether to
 allow Gamennetto. Choose **Private networks** and click **Allow**.
@@ -37,7 +40,8 @@ allow Gamennetto. Choose **Private networks** and click **Allow**.
 
 On the **host** (the PC whose screen you want to show):
 
-1. Open **Share this screen** (or type `gamennetto host`).
+1. Open **Share this screen** (or type `gamennetto host --ask`) and choose
+   **Mirror**.
 2. If you have several monitors, pick one.
 3. Pick a quality. Each choice is explained on screen:
    - **Fastest**: lowest delay, softer image (good for games and drawing).
@@ -79,8 +83,8 @@ The connection is always encrypted.
 
 ## 3. Control the host from the viewer
 
-Start the host from a terminal (the **Gamennetto terminal** entry, or any
-PowerShell window) with:
+On the host, answer **yes** to *"Let the other PC use this PC's mouse and
+keyboard?"* (asked by **Share this screen**), or start it from a terminal with:
 
 ```
 gamennetto host --allow-control
@@ -116,8 +120,8 @@ open-source Virtual Display Driver (see THIRD_PARTY.md).
 
 Then, each time:
 
-1. On the host: **Use as extra screen (extend)**, or
-   `gamennetto host --extend --allow-control`.
+1. On the host: **Share this screen** and choose **Extend** (it offers to
+   install the driver if it's missing), or `gamennetto host --extend --allow-control`.
 2. On the viewer: **View another PC**, as in step 2.
 
 When the viewer connects, a new screen appears to the **right** of the host's

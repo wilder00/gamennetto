@@ -39,8 +39,12 @@ enum Command {
         #[arg(long)]
         extend: bool,
         /// Size of the virtual monitor, e.g. 1920x1080. Default: the viewer's screen.
-        #[arg(long, requires = "extend", value_parser = display::parse_size)]
+        #[arg(long, value_parser = display::parse_size)]
         size: Option<(u32, u32)>,
+        /// Ask, step by step, for every option not given here (mirror or
+        /// extend, screen, size, quality, control).
+        #[arg(short = 'i', long)]
+        ask: bool,
     },
     /// Install, check or turn off the virtual monitor used by `host --extend`.
     Display {
@@ -68,9 +72,12 @@ enum Command {
         seconds: Option<u64>,
         /// Picture size: fit (as big as possible, whole picture), fill (whole
         /// window, edges trimmed) or actual (pixel for pixel). Ctrl+Alt+S
-        /// changes it while viewing.
-        #[arg(long, value_enum, default_value_t = Scale::Fit)]
-        scale: Scale,
+        /// changes it while viewing. Default: fit.
+        #[arg(long, value_enum)]
+        scale: Option<Scale>,
+        /// Ask for every option not given here (picture size).
+        #[arg(short = 'i', long)]
+        ask: bool,
     },
     /// List or forget the PCs this PC has approved.
     Devices {
@@ -132,6 +139,7 @@ enum Scale {
     Actual,
 }
 
+mod ask;
 mod capture_test;
 mod devices;
 mod display;
@@ -146,9 +154,9 @@ mod view;
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Host { monitor, quality, fps, mbps, allow_control, bind, no_discovery, extend, size } => {
+        Command::Host { monitor, quality, fps, mbps, allow_control, bind, no_discovery, extend, size, ask } => {
             update::notify_in_background();
-            host::run(host::Options {
+            let mut o = host::Options {
                 monitor,
                 quality,
                 fps,
@@ -156,16 +164,26 @@ fn main() -> anyhow::Result<()> {
                 bind,
                 allow_control,
                 discovery: !no_discovery,
-                extend,
+                // A size only makes sense for an extra screen.
+                extend: extend || size.is_some(),
                 size,
-            })?;
+            };
+            if ask {
+                ask::host_options(&mut o)?;
+            }
+            host::run(o)?;
         }
         Command::Display { action } => display::run(action)?,
         Command::ResetDisplays => display::run(display::Action::Off)?,
         Command::Update { check } => update::run(check)?,
         Command::Devices { action } => devices::run(action)?,
-        Command::View { address, code, seconds, scale } => {
+        Command::View { address, code, seconds, scale, ask } => {
             update::notify_in_background();
+            let scale = match scale {
+                Some(s) => s,
+                None if ask => ask::view_scale()?,
+                None => Scale::Fit,
+            };
             let scale = match scale {
                 Scale::Fit => gamennetto_decode::ScaleMode::Fit,
                 Scale::Fill => gamennetto_decode::ScaleMode::Fill,

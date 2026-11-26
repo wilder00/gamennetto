@@ -18,6 +18,7 @@ controlling the other PC, updates, troubleshooting).
 ## Quick reference
 On the PC that shares its screen (the host):
 ```
+gamennetto host --ask                    # asks everything step by step (mirror/extend, size, control...)
 gamennetto host                          # mirror; asks for quality, shows a pairing code
 gamennetto host --allow-control          # also let the viewer use mouse and keyboard
 gamennetto display install               # once: driver for extend mode (asks for admin)
@@ -27,6 +28,7 @@ gamennetto reset-displays                # if the extra screen ever stays on
 On the other PC (the viewer):
 ```
 gamennetto view                          # finds the host; the first time, approve it
+gamennetto view --ask                    # also asks the picture size (fit / fill / actual)
 gamennetto view 192.168.1.20 --code 482913
 ```
 The first time two PCs connect, type the host's 6-digit code on the viewer, or
